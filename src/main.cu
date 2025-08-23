@@ -215,7 +215,9 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
-			// TODO check if (suppressed) watershed point, skip if not
+			// check if (suppressed) watershed point, skip if not
+			if (suppressed_image[(dv * width + du)] == 0) continue;
+
 			// normalize v displacement
 			dvn = (dv - v) * iheight;
 
@@ -247,7 +249,9 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 
 		// go through side
 		for (int du = start; du < end; ++du) {
-			// TODO check if (suppressed) watershed point, skip if not
+			// check if (suppressed) watershed point, skip if not
+			if (suppressed_image[(dv * width + du)] == 0) continue;
+
 			// normalize v displacement
 			dun = (du - u) * iwidth;
 
@@ -279,7 +283,9 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
-			// TODO check if (suppressed) watershed point, skip if not
+			// check if (suppressed) watershed point, skip if not
+			if (suppressed_image[(dv * width + du)] == 0) continue;
+
 			// normalize v displacement
 			dvn = (dv - v) * iheight;
 
@@ -312,7 +318,9 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 
 		// go through side
 		for (int du = start; du < end; ++du) {
-			// TODO check if (suppressed) watershed point, skip if not
+			// check if (suppressed) watershed point, skip if not
+			if (suppressed_image[(dv * width + du)] == 0) continue;
+
 			// normalize v displacement
 			dun = (du - u) * iwidth;
 
@@ -451,7 +459,7 @@ void convert_image(const char* filepath) {
   CUDA_CHECK(cudaMemcpy(h_cone_map, d_cone_map, size * 4, cudaMemcpyDeviceToHost));
 
   // Save image
-	std::string cone_map_file = std::filesystem::path(filepath).stem().string() + "_cone_map.png";
+	std::string cone_map_file = std::filesystem::path(filepath).stem().string() + "_relaxed_cone_map.png";
   stbi_write_png(cone_map_file.c_str(), width, height, 4, h_cone_map, width * 4);
   printf("Written image as %s\n", cone_map_file.c_str());
 

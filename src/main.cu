@@ -438,22 +438,22 @@ void convert_image(const char* filepath) {
   printf("Written image as %s\n", suppressed_file.c_str());
 
 // Relaxed cone map generation
-	unsigned char *d_conemap;
+	unsigned char *d_cone_map;
 
-  CUDA_CHECK(cudaMalloc(&d_conemap, size * 4));
+  CUDA_CHECK(cudaMalloc(&d_cone_map, size * 4));
   
   // Launch kernel
-  create_cone_map<<<blocks, threads>>>(d_input, d_derivative_image, d_suppressed, d_conemap, width, height, channels);
+  create_cone_map<<<blocks, threads>>>(d_input, d_derivative_image, d_suppressed, d_cone_map, width, height, channels);
   CUDA_CHECK(cudaDeviceSynchronize());
   
   // Copy result back
-  unsigned char* h_conemap = (unsigned char*)malloc(size * 4);
-  CUDA_CHECK(cudaMemcpy(h_conemap, d_conemap, size * 4, cudaMemcpyDeviceToHost));
+  unsigned char* h_cone_map = (unsigned char*)malloc(size * 4);
+  CUDA_CHECK(cudaMemcpy(h_cone_map, d_cone_map, size * 4, cudaMemcpyDeviceToHost));
 
   // Save image
-	std::string conemap_file = std::filesystem::path(filepath).stem().string() + "_conemap.png";
-  stbi_write_png(conemap_file.c_str(), width, height, 4, h_conemap, width * 4);
-  printf("Written image as %s\n", conemap_file.c_str());
+	std::string cone_map_file = std::filesystem::path(filepath).stem().string() + "_cone_map.png";
+  stbi_write_png(cone_map_file.c_str(), width, height, 4, h_cone_map, width * 4);
+  printf("Written image as %s\n", cone_map_file.c_str());
 
 // Cleanup
   CUDA_CHECK(cudaFree(d_input));
@@ -464,14 +464,14 @@ void convert_image(const char* filepath) {
   CUDA_CHECK(cudaFree(d_second_derivative_image));
   CUDA_CHECK(cudaFree(d_watershed));
   CUDA_CHECK(cudaFree(d_suppressed));
-  CUDA_CHECK(cudaFree(d_conemap));
+  CUDA_CHECK(cudaFree(d_cone_map));
   stbi_image_free(h_input);
   free(h_derivative_image);
   free(h_dirs_image);
   free(h_second_derivative_image);
   free(h_watershed);
   free(h_suppressed);
-  free(h_conemap);
+  free(h_cone_map);
 }
 
 int main(int argc, char** argv) {

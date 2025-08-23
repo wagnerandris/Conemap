@@ -176,7 +176,7 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 	float iwidth = 1.0f / width;
 	float iheight = 1.0f / height;
 
-	// TODO Why are we assuming run/rise = 1, instead of infinity?
+	// TODO Why are we assuming run/rise = 1, instead of infinity? Float textures?
 	float min_ratio2 = 1.0f;
 
 	// normalize height
@@ -189,45 +189,15 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 
 	// search in an increasing radius spiral around the texel
 	for (int rad = 1;
+			// TODO why the 1.1f?
+			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
 			rad * rad <= 1.1f * (1.0f - h) * width *
 									 1.1f * (1.0f - h) * height *
 									 min_ratio2 &&
+			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
 			rad <= 1.1f * (1.0f - h) * width &&
 			rad <= 1.1f * (1.0f - h) * height;
 			++rad) {
-
-		// Left side
-
-		// u displacement	
-		du = u - rad;
-		// normalized
-		dun = -rad * iwidth;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du < 0) du += width; 
-		// TODO symmetrical corners
-		// set v limits
-		start = max(v - rad + 1, 0);
-		end = min(v + rad - 1, height);
-
-		// go through side
-		for (int dv = start; dv < end; ++dv) {
-			// TODO check if (suppressed) watershed point, skip if not
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[(dv * width + du) * channels] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
 
 		// Right side
 
@@ -239,9 +209,8 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 		// TODO only if tileable option is set
 		// loop around until reaching valid coordinates
 		while (du >= width) du -= width; 
-		// TODO symmetrical corners
 		// set v limits
-		start = max(v - rad + 1, 0);
+		start = max(v - rad, 0);
 		end = min(v + rad - 1, height);
 
 		// go through side
@@ -272,9 +241,8 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 		// TODO only if tileable option is set
 		// loop around until reaching valid coordinates
 		while (dv < 0) dv += height; 
-		// TODO symmetrical corners
 		// set u limits
-		start = max(u - rad + 1, 0);
+		start = max(u - rad, 0);
 		end = min(u + rad - 1, width);
 
 		// go through side
@@ -295,6 +263,39 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 			}
 		}
 
+		// Left side
+
+		// u displacement	
+		du = u - rad;
+		// normalized
+		dun = -rad * iwidth;
+
+		// TODO only if tileable option is set
+		// loop around until reaching valid coordinates
+		while (du < 0) du += width; 
+		// set v limits
+		start = max(v - rad + 1, 0);
+		end = min(v + rad, height);
+
+		// go through side
+		for (int dv = start; dv < end; ++dv) {
+			// TODO check if (suppressed) watershed point, skip if not
+			// normalize v displacement
+			dvn = (dv - v) * iheight;
+
+			// distance squared
+			float d2 = dun * dun + dvn * dvn;
+
+			// height difference
+			float dh = heightmap[(dv * width + du) * channels] / 255.0 - h;
+
+			// if more steep than previous best, override
+			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
+				min_ratio2 = d2 / (dh * dh);
+			}
+		}
+
+
 		// Bottom side
 
 		// u displacement	
@@ -305,10 +306,9 @@ __global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivat
 		// TODO only if tileable option is set
 		// loop around until reaching valid coordinates
 		while (dv >= height) dv -= height; 
-		// TODO symmetrical corners
 		// set u limits
 		start = max(u - rad + 1, 0);
-		end = min(u + rad - 1, width);
+		end = min(u + rad, width);
 
 		// go through side
 		for (int du = start; du < end; ++du) {

@@ -7,4 +7,5 @@ add_project_arguments(
 
 executable('Conemap',
            'src/main.cu',
+           'src/kernels.cu',
            install : true)

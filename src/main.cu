@@ -56,15 +56,26 @@ void convert_image(const char *filepath) {
 
 /* Directional local maxima */
   // Allocate device memory
-  unsigned char *d_local_max_dirs;
-  CUDA_CHECK(cudaMalloc(&d_local_max_dirs, size));
+  unsigned char *d_local_max_8dirs, *d_dir_bit_image;
+  CUDA_CHECK(cudaMalloc(&d_local_max_8dirs, size));
+  CUDA_CHECK(cudaMalloc(&d_dir_bit_image, size));
 
   // Launch kernel
-  local_max_dirs<<<blocks, threads>>>(d_input_image, d_local_max_dirs, width,
-                                      height, channels);
+  local_max_8dirs<<<blocks, threads>>>(d_input_image, d_local_max_8dirs,
+																			 width, height, channels);
   CUDA_CHECK(cudaDeviceSynchronize());
 
-  // TODO local max dirs images
+  // Save local maxima in each direction to separate images
+	for (int i = 0; i < 8; ++i) {
+		bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
+																			width, height, 1 << i);
+		write_device_texture_to_file((output_name + "_local_max_dir" + std::to_string(i) + ".png").c_str(),
+																 d_dir_bit_image, width, height, 1);
+	}
+	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
+																		width, height, 0b11111111);
+	write_device_texture_to_file((output_name + "_local_max_any_dir.png").c_str(),
+															 d_dir_bit_image, width, height, 1);
 
 
 /* Relaxed cone map generation */
@@ -73,9 +84,9 @@ void convert_image(const char *filepath) {
   CUDA_CHECK(cudaMalloc(&d_cone_map, size * 4));
 
   // Launch kernel
-  create_cone_map2<<<blocks, threads>>>(d_input_image, d_fod_image,
-                                        d_local_max_dirs, d_cone_map, width,
-                                        height, channels);
+  create_cone_map_8dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
+																						 d_local_max_8dirs, d_cone_map,
+																						 width, height, channels);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file
@@ -138,7 +149,8 @@ void convert_image(const char *filepath) {
   // CUDA_CHECK(cudaFree(d_second_derivative_image));
   // CUDA_CHECK(cudaFree(d_watershed));
   // CUDA_CHECK(cudaFree(d_suppressed));
-  CUDA_CHECK(cudaFree(d_local_max_dirs));
+  CUDA_CHECK(cudaFree(d_local_max_8dirs));
+  CUDA_CHECK(cudaFree(d_dir_bit_image));
   CUDA_CHECK(cudaFree(d_cone_map));
 }
 

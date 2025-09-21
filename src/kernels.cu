@@ -1,7 +1,7 @@
 #include "kernels.cuh"
 
 
-__global__ void local_max_dirs(unsigned char* heightmap, unsigned char* dirs, int width, int height, int channels) {
+__global__ void local_max_8dirs(unsigned char* heightmap, unsigned char* dirs, int width, int height, int channels) {
   int u = blockIdx.x * blockDim.x + threadIdx.x;
   int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -39,7 +39,16 @@ __global__ void local_max_dirs(unsigned char* heightmap, unsigned char* dirs, in
     dirs[v * width + u] = result;
 }
 
-__global__ void create_cone_map2(unsigned char* heightmap, unsigned char* derivative_image, unsigned char* dirs, unsigned char* cone_map, int width, int height, int channels) {
+__global__ void bits_to_image(unsigned char* input, unsigned char* output_image, int width, int height, unsigned char bitmask) {
+  int u = blockIdx.x * blockDim.x + threadIdx.x;
+  int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (u >= width || v >= height) return;
+
+  output_image[v* width + u] = input[v * width + u] & bitmask ? 255 : 0;
+}
+
+__global__ void create_cone_map_8dirs(unsigned char* heightmap, unsigned char* derivative_image, unsigned char* dirs, unsigned char* cone_map, int width, int height, int channels) {
   int u = blockIdx.x * blockDim.x + threadIdx.x;
   int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -392,7 +401,7 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char*
 	}
 }
 
-__global__ void create_cone_map(unsigned char* heightmap, unsigned char* derivative_image, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height, int channels) {
+__global__ void create_cone_map_watershed(unsigned char* heightmap, unsigned char* derivative_image, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height, int channels) {
   int u = blockIdx.x * blockDim.x + threadIdx.x;
   int v = blockIdx.y * blockDim.y + threadIdx.y;
 

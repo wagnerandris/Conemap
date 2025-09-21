@@ -1,8 +1,8 @@
 // STD
-#include <cstdlib>
+#include <iostream>
 #include <filesystem>
-#include <stdio.h>
 #include <string>
+#include <vector>
 
 // Boost
 #include <boost/program_options.hpp>
@@ -10,9 +10,11 @@
 #include "file_utils.cuh"
 #include "kernels.cuh"
 
+static std::filesystem::path output_path;
+
 void convert_image(const char *filepath) {
 
-  std::string output_name = std::filesystem::path(filepath).stem().string(); // TODO output path
+  std::string output_name = output_path.append(std::filesystem::path(filepath).stem().string());
 
 /* Load image */
   unsigned char *d_input_image = nullptr;
@@ -140,17 +142,59 @@ void convert_image(const char *filepath) {
   CUDA_CHECK(cudaFree(d_cone_map));
 }
 
-int main(int argc, char **argv) {
-  if (argc < 2) {
-    fprintf(stderr, "No texture provided.\n");
-    exit(0);
+int main(int argc, char* argv[]) {
+  std::vector<std::string> input_files;
+
+  // Possible options
+  boost::program_options::options_description desc("Allowed options");
+  desc.add_options()
+    ("help,h", "produce help message")
+    ("output,o", boost::program_options::value<std::filesystem::path>(&output_path)->default_value("."), "set path to output folder")
+    ("input,i", boost::program_options::value<std::vector<std::string>>(&input_files), "input files");
+		//TODO flip Y, depthmap, wrap
+
+  // Positional options
+  boost::program_options::positional_options_description pod;
+  pod.add("input", -1);  // all remaining options
+
+  boost::program_options::variables_map vm;
+
+  try {
+    boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(desc).positional(pod).run(), vm);
+    boost::program_options::notify(vm);
+  } catch (std::exception& e) {
+    std::cerr << "Error: " << e.what() << "\n";
+    return 1;
   }
-  for (int i = 1; i < argc; ++i) {
-    if (!std::filesystem::exists(argv[i]) &&
-        std::filesystem::is_regular_file(argv[i])) {
-      fprintf(stderr, "No such file: %s\n", argv[i]);
+
+	// Help
+  if (vm.count("help")) {
+    std::cout << "Usage: " << argv[0] << " [-o OUTPUT] INPUT [INPUT]...\n";
+    std::cout << desc << "\n";
+    return 0;
+  }
+
+	// No input
+  if (input_files.empty()) {
+    std::cerr << "Error: No input files provided.\n";
+    return 1;
+  }
+
+  // Output
+  if (!std::filesystem::exists(output_path)) {
+		std::filesystem::create_directory(output_path);
+  } else if (!std::filesystem::is_directory(output_path)) {
+		std::cerr << "Error: " << output_path << " is not a directory.\n";
+		return 1;
+  }
+
+	// OK
+  for (auto file : input_files) {
+    if (!std::filesystem::exists(file) || !std::filesystem::is_regular_file(file)) {
+			std::cerr << "Error: " << file << " is not a file.\n";
+			continue;
     }
-    convert_image(argv[i]);
+    convert_image(file.c_str());
   }
 
   return 0;

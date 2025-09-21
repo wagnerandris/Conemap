@@ -69,12 +69,22 @@ void convert_image(const char *filepath) {
 	for (int i = 0; i < 8; ++i) {
 		bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
 																			width, height, 1 << i);
+		CUDA_CHECK(cudaDeviceSynchronize());
 		write_device_texture_to_file((output_name + "_local_max_dir" + std::to_string(i) + ".png").c_str(),
 																 d_dir_bit_image, width, height, 1);
 	}
+	// Any of the 8
 	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
 																		width, height, 0b11111111);
-	write_device_texture_to_file((output_name + "_local_max_any_dir.png").c_str(),
+  CUDA_CHECK(cudaDeviceSynchronize());
+	write_device_texture_to_file((output_name + "_local_max_8dirs.png").c_str(),
+															 d_dir_bit_image, width, height, 1);
+
+	// Any of the 4 axis aligned dirs
+	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
+																		width, height, 0b01010101);
+  CUDA_CHECK(cudaDeviceSynchronize());
+	write_device_texture_to_file((output_name + "_local_max_4dirs.png").c_str(),
 															 d_dir_bit_image, width, height, 1);
 
 
@@ -90,65 +100,72 @@ void convert_image(const char *filepath) {
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file
-  write_device_texture_to_file((output_name + "_relaxed_cone_map.png").c_str(),
+  write_device_texture_to_file((output_name + "_relaxed_cone_map_8dirs.png").c_str(),
+                               d_cone_map, width, height, 4);
+
+  // Launch kernel
+  create_cone_map_4dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
+																						 d_local_max_8dirs, d_cone_map,
+																						 width, height, channels);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  // Write result image to file
+  write_device_texture_to_file((output_name + "_relaxed_cone_map_4dirs.png").c_str(),
                                d_cone_map, width, height, 4);
 
 
-// /* Second order derivatives and watershed */
-//   // Allocate device memory
-//   unsigned char *d_sod_image, *d_watershed;
-//   CUDA_CHECK(cudaMalloc(&d_sod_image, size * 4));
-//   CUDA_CHECK(cudaMalloc(&d_watershed, size));
-//
-//   // Launch kernel
-//   second_derivative<<<blocks, threads>>>(d_fod, d_sod_image, d_watershed, width,
-//                                          height);
-//   CUDA_CHECK(cudaDeviceSynchronize());
-//
-//   // Write result image to file
-//   write_device_texture_to_file((output + "_sod.png").c_str(), d_sod_image,
-//                                width, height, 4);
-//   write_device_texture_to_file((output + "_watershed.png").c_str(), d_watershed,
-//                                width, height, 1);
-//
-//   // Non maximum suppression
-//   unsigned char *d_suppressed;
-//   CUDA_CHECK(cudaMalloc(&d_suppressed, size));
-//
-//   // Launch kernel
-//   non_maximum_suppression<<<blocks, threads>>>(d_input_image, d_fod_dirs,
-//                                                d_watershed, d_suppressed, width,
-//                                                height, channels);
-//   CUDA_CHECK(cudaDeviceSynchronize());
-//
-//   // Write result image to file
-//   write_device_texture_to_file((output + "_suppressed.png").c_str(),
-//                                d_suppressed, width, height, 1);
-//
-//
-// /* Relaxed cone map generation */
-//   // Allocate device memory
-//   unsigned char *d_cone_map;
-//   CUDA_CHECK(cudaMalloc(&d_cone_map, size * 4));
-//
-//   // Launch kernel
-//   create_cone_map<<<blocks, threads>>>(d_input_image, d_fod_image, d_suppressed,
-//                                        d_cone_map, width, height, channels);
-//   CUDA_CHECK(cudaDeviceSynchronize());
-//
-//   // Write result image to file
-//   write_device_texture_to_file((output + "_relaxed_cone_map.png").c_str(),
-//                                d_cone_map, width, height, 4);
+/* Second order derivatives and watershed */
+  // Allocate device memory
+  unsigned char *d_sod_image, *d_watershed;
+  CUDA_CHECK(cudaMalloc(&d_sod_image, size * 4));
+  CUDA_CHECK(cudaMalloc(&d_watershed, size));
+
+  // Launch kernel
+  second_derivative<<<blocks, threads>>>(d_fod, d_sod_image, d_watershed,
+																				 width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  // Write result image to file
+  write_device_texture_to_file((output_name + "_sod.png").c_str(), d_sod_image,
+                               width, height, 4);
+  write_device_texture_to_file((output_name + "_watershed.png").c_str(), d_watershed,
+                               width, height, 1);
+
+/* Non maximum suppression */
+  // Allocate device memory
+  unsigned char *d_suppressed;
+  CUDA_CHECK(cudaMalloc(&d_suppressed, size));
+
+  // Launch kernel
+  non_maximum_suppression<<<blocks, threads>>>(d_input_image, d_fod_dirs,
+                                               d_watershed, d_suppressed,
+                                               width, height, channels);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  // Write result image to file
+  write_device_texture_to_file((output_name + "_suppressed.png").c_str(),
+                               d_suppressed, width, height, 1);
+
+
+/* Relaxed cone map generation */
+  // Launch kernel
+  create_cone_map_analytic<<<blocks, threads>>>(d_input_image, d_fod_image, d_fod_dirs, d_suppressed,
+																								d_cone_map, width, height, channels);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  // Write result image to file
+  write_device_texture_to_file((output_name + "_relaxed_cone_map_analytic.png").c_str(),
+                               d_cone_map, width, height, 4);
 
 /* Cleanup */
   CUDA_CHECK(cudaFree(d_input_image));
+  CUDA_CHECK(cudaFree(d_fod));
   CUDA_CHECK(cudaFree(d_fod_image));
   CUDA_CHECK(cudaFree(d_fod_dirs));
   CUDA_CHECK(cudaFree(d_fod_dirs_image));
-  CUDA_CHECK(cudaFree(d_fod));
-  // CUDA_CHECK(cudaFree(d_second_derivative_image));
-  // CUDA_CHECK(cudaFree(d_watershed));
-  // CUDA_CHECK(cudaFree(d_suppressed));
+  CUDA_CHECK(cudaFree(d_sod_image));
+  CUDA_CHECK(cudaFree(d_watershed));
+  CUDA_CHECK(cudaFree(d_suppressed));
   CUDA_CHECK(cudaFree(d_local_max_8dirs));
   CUDA_CHECK(cudaFree(d_dir_bit_image));
   CUDA_CHECK(cudaFree(d_cone_map));

@@ -23,7 +23,11 @@ void convert_image(const char *filepath) {
     return;
 
   size_t size = width * height;
-  // size_t input_size = size * channels;
+
+
+  // TODO delete
+  write_device_texture_to_file((output_name + ".png").c_str(), d_input_image, width, height, 1);
+
 
   // Threads/blocks
   // TODO what's optimal?
@@ -44,8 +48,7 @@ void convert_image(const char *filepath) {
 
   // Launch kernel
   first_derivative<<<blocks, threads>>>(d_input_image, d_fod_image, d_fod_dirs,
-                                        d_fod_dirs_image, d_fod, width, height,
-                                        channels);
+                                        d_fod_dirs_image, d_fod, width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file
@@ -62,7 +65,7 @@ void convert_image(const char *filepath) {
 
   // Launch kernel
   local_max_8dirs<<<blocks, threads>>>(d_input_image, d_local_max_8dirs,
-																			 width, height, channels);
+																			 width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Save local maxima in each direction to separate images
@@ -96,7 +99,7 @@ void convert_image(const char *filepath) {
   // Launch kernel
   create_cone_map_8dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
 																						 d_local_max_8dirs, d_cone_map,
-																						 width, height, channels);
+																						 width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file
@@ -106,7 +109,7 @@ void convert_image(const char *filepath) {
   // Launch kernel
   create_cone_map_4dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
 																						 d_local_max_8dirs, d_cone_map,
-																						 width, height, channels);
+																						 width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file
@@ -139,7 +142,7 @@ void convert_image(const char *filepath) {
   // Launch kernel
   non_maximum_suppression<<<blocks, threads>>>(d_input_image, d_fod_dirs,
                                                d_watershed, d_suppressed,
-                                               width, height, channels);
+                                               width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file
@@ -150,7 +153,7 @@ void convert_image(const char *filepath) {
 /* Relaxed cone map generation */
   // Launch kernel
   create_cone_map_analytic<<<blocks, threads>>>(d_input_image, d_fod_image, d_fod_dirs, d_suppressed,
-																								d_cone_map, width, height, channels);
+																								d_cone_map, width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file

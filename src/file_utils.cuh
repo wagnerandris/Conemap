@@ -27,19 +27,19 @@ inline void gpuAssert(cudaError_t code, const char *file, int line)
 // TODO more sophisticated checks? (file exists etc)
 inline bool read_texture_to_device(unsigned char* &device_pointer, const char* filepath, int* width, int* height, int* channels) {
 	// load data
-  unsigned char* data = stbi_load(filepath, width, height, channels, 0);
+  unsigned char* data = stbi_load(filepath, width, height, channels, 1);
   if (!data) {
     fprintf(stderr, "Could not load texture from %s.\n", filepath);
     return false;
   }
 
 	// copy to device
-	int size = (*width) * (*height) * (*channels);
+	int size = (*width) * (*height);
   CUDA_CHECK(cudaMalloc(&device_pointer, size));
   CUDA_CHECK(cudaMemcpy(device_pointer, data, size, cudaMemcpyHostToDevice));
   free(data);
 
-  printf("Loaded texture from %s.\nWidth: %d, Height: %d, Channels: %d\n", filepath, *width, *height, *channels);
+  printf("Loaded texture from %s.\nWidth: %d, Height: %d\n", filepath, *width, *height);
   return true;
 }
 

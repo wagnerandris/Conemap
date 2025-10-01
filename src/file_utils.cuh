@@ -50,10 +50,12 @@ inline bool write_device_texture_to_file(const char* filepath, unsigned char* de
   CUDA_CHECK(cudaMemcpy(h_data, device_pointer, size, cudaMemcpyDeviceToHost));
 
 	// write to file
-  if (stbi_write_png(filepath, width, height, channels, h_data, width * channels)) {
-		printf("Written image as %s\n", filepath);
+  if (!stbi_write_png(filepath, width, height, channels, h_data, width * channels)) {
+  	fprintf(stderr, "Could not write image to %s\n", filepath);
 		delete[] h_data;
-		return true;
+		return false;
   };
-  return false;
+	delete[] h_data;
+	printf("Written image as %s\n", filepath);
+	return true;
 }

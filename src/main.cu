@@ -14,7 +14,7 @@ static std::filesystem::path output_path;
 
 void convert_image(const char *filepath) {
 
-  std::string output_name = output_path.append(std::filesystem::path(filepath).stem().string());
+	std::string output_name = output_path / std::filesystem::path(filepath).stem();
 
 /* Load image */
   unsigned char *d_input_image = nullptr;
@@ -28,13 +28,11 @@ void convert_image(const char *filepath) {
   // TODO delete
   write_device_texture_to_file((output_name + ".png").c_str(), d_input_image, width, height, 1);
 
-
   // Threads/blocks
   // TODO what's optimal?
   dim3 threads(16, 16);
   dim3 blocks((width + threads.x - 1) / threads.x,
               (height + threads.y - 1) / threads.y);
-
 
 /* First order derivatives */
   // Allocate device memory
@@ -68,14 +66,15 @@ void convert_image(const char *filepath) {
 																			 width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
-  // Save local maxima in each direction to separate images
-	for (int i = 0; i < 8; ++i) {
-		bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
-																			width, height, 1 << i);
-		CUDA_CHECK(cudaDeviceSynchronize());
-		write_device_texture_to_file((output_name + "_local_max_dir" + std::to_string(i) + ".png").c_str(),
-																 d_dir_bit_image, width, height, 1);
-	}
+	//  // Save local maxima in each direction to separate images
+	// for (int i = 0; i < 8; ++i) {
+	// 	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
+	// 																		width, height, 1 << i);
+	// 	CUDA_CHECK(cudaDeviceSynchronize());
+	// 	write_device_texture_to_file((output_name + "_local_max_dir" + std::to_string(i) + ".png").c_str(),
+	// 															 d_dir_bit_image, width, height, 1);
+	// }
+
 	// Any of the 8
 	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
 																		width, height, 0b11111111);
@@ -90,6 +89,33 @@ void convert_image(const char *filepath) {
 	write_device_texture_to_file((output_name + "_local_max_4dirs.png").c_str(),
 															 d_dir_bit_image, width, height, 1);
 
+
+// /* Create binary mipmaps */
+//   int mipmap_width  = (width  + 1) / 2;
+//   int mipmap_height = (height + 1) / 2;
+//
+//   unsigned char *d_binary_mipmap;
+//   CUDA_CHECK(cudaMalloc(&d_binary_mipmap, mipmap_width * mipmap_height));
+//
+// 	create_binary_mipmap_level<<<blocks, threads>>>(d_binary_mipmap, d_local_max_8dirs, width, height, mipmap_width, mipmap_height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+//   CUDA_CHECK(cudaFree(d_dir_bit_image));
+//   CUDA_CHECK(cudaMalloc(&d_dir_bit_image, mipmap_width * mipmap_height));
+//
+// 	// Any of the 8
+// 	bits_to_image<<<blocks, threads>>>(d_binary_mipmap, d_dir_bit_image,
+// 																		mipmap_width, mipmap_height, 0b11111111);
+//   CUDA_CHECK(cudaDeviceSynchronize());
+// 	write_device_texture_to_file((output_name + "_local_max_8dirs_mipmap.png").c_str(),
+// 															 d_dir_bit_image, mipmap_width, mipmap_height, 1);
+//
+// 	// Any of the 4 axis aligned dirs
+// 	bits_to_image<<<blocks, threads>>>(d_binary_mipmap, d_dir_bit_image,
+// 																		mipmap_width, mipmap_height, 0b01010101);
+//   CUDA_CHECK(cudaDeviceSynchronize());
+// 	write_device_texture_to_file((output_name + "_local_max_4dirs_mipmap.png").c_str(),
+// 															 d_dir_bit_image, mipmap_width, mipmap_height, 1);
 
 /* Relaxed cone map generation */
   // Allocate device memory
@@ -171,6 +197,7 @@ void convert_image(const char *filepath) {
   CUDA_CHECK(cudaFree(d_suppressed));
   CUDA_CHECK(cudaFree(d_local_max_8dirs));
   CUDA_CHECK(cudaFree(d_dir_bit_image));
+  // CUDA_CHECK(cudaFree(d_binary_mipmap));
   CUDA_CHECK(cudaFree(d_cone_map));
 }
 

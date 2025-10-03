@@ -13,6 +13,8 @@ __device__ __constant__ float hkernel[9] = {
  -1, 0, 1
 };
 
+__global__ void invert(unsigned char* data, int width, int height);
+
 __global__ void local_max_8dirs(unsigned char* heightmap, unsigned char* dirs, int width, int height);
 
 __global__ void bits_to_image(unsigned char* input, unsigned char* output_image, int width, int height, unsigned char bitmask);

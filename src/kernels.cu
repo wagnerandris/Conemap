@@ -1,5 +1,13 @@
 #include "kernels.cuh"
 
+__global__ void invert(unsigned char* data, int width, int height) {
+  int u = blockIdx.x * blockDim.x + threadIdx.x;
+  int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (u >= width || v >= height) return;
+
+	data[v * width + u] = 255 - data[v * width + u];
+}
 
 __global__ void local_max_8dirs(unsigned char* heightmap, unsigned char* dirs, int width, int height) {
   int u = blockIdx.x * blockDim.x + threadIdx.x;

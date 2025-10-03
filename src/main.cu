@@ -12,9 +12,11 @@
 
 static std::filesystem::path output_path;
 
-void convert_image(const char *filepath) {
+void convert_image(const char *filepath, bool depthmap = false) {
 
-	std::string output_name = output_path / std::filesystem::path(filepath).stem();
+	std::string output_name = depthmap ?
+		output_path / std::filesystem::path(filepath).stem().concat("_depthmap") :
+		output_path / std::filesystem::path(filepath).stem() ;
 
 /* Load image */
   unsigned char *d_input_image = nullptr;
@@ -24,15 +26,15 @@ void convert_image(const char *filepath) {
 
   size_t size = width * height;
 
-
-  // TODO delete
-  write_device_texture_to_file((output_name + ".png").c_str(), d_input_image, width, height, 1);
-
   // Threads/blocks
   // TODO what's optimal?
   dim3 threads(16, 16);
   dim3 blocks((width + threads.x - 1) / threads.x,
               (height + threads.y - 1) / threads.y);
+
+  if (depthmap) {
+		invert<<<blocks, threads>>>(d_input_image, width, height);
+  }
 
 /* First order derivatives */
   // Allocate device memory
@@ -202,19 +204,20 @@ void convert_image(const char *filepath) {
 }
 
 int main(int argc, char* argv[]) {
-  std::vector<std::string> input_files;
+  std::vector<std::string> heightmap_files;
+  std::vector<std::string> depthmap_files;
 
   // Possible options
   boost::program_options::options_description desc("Allowed options");
   desc.add_options()
     ("help,h", "produce help message")
     ("output,o", boost::program_options::value<std::filesystem::path>(&output_path)->default_value("."), "set path to output folder")
-    ("input,i", boost::program_options::value<std::vector<std::string>>(&input_files), "input files");
-		//TODO flip Y, depthmap, wrap
+    ("heightmap", boost::program_options::value<std::vector<std::string>>(&heightmap_files), "input heightmap file")
+    ("depthmap,d", boost::program_options::value<std::vector<std::string>>(&depthmap_files), "input depthmap file");
 
   // Positional options
   boost::program_options::positional_options_description pod;
-  pod.add("input", -1);  // all remaining options
+  pod.add("heightmap", -1);  // all remaining options
 
   boost::program_options::variables_map vm;
 
@@ -228,13 +231,13 @@ int main(int argc, char* argv[]) {
 
 	// Help
   if (vm.count("help")) {
-    std::cout << "Usage: " << argv[0] << " [-o OUTPUT] INPUT [INPUT]...\n";
+    std::cout << "Usage: " << argv[0] << " [-o OUTPUT] [-d] INPUT [[-d] INPUT]...\n";
     std::cout << desc << "\n";
     return 0;
   }
 
 	// No input
-  if (input_files.empty()) {
+  if (heightmap_files.empty() && depthmap_files.empty()) {
     std::cerr << "Error: No input files provided.\n";
     return 1;
   }
@@ -248,12 +251,21 @@ int main(int argc, char* argv[]) {
   }
 
 	// OK
-  for (auto file : input_files) {
+  for (auto file : heightmap_files) {
     if (!std::filesystem::exists(file) || !std::filesystem::is_regular_file(file)) {
 			std::cerr << "Error: " << file << " is not a file.\n";
 			continue;
     }
     convert_image(file.c_str());
+  }
+
+	// OK
+  for (auto file : depthmap_files) {
+    if (!std::filesystem::exists(file) || !std::filesystem::is_regular_file(file)) {
+			std::cerr << "Error: " << file << " is not a file.\n";
+			continue;
+    }
+    convert_image(file.c_str(), true);
   }
 
   return 0;

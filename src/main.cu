@@ -81,6 +81,18 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	// Write result image to file
 	write_device_texture_to_file((output_name + "_suppressed.png").c_str(), suppressed);
 
+/* Create binary mipmaps */
+  int mipmap_width  = (width  + 1) / 2;
+  int mipmap_height = (height + 1) / 2;
+
+  TextureDevicePointer<unsigned char> binary_mipmap{mipmap_width, mipmap_height, 1};
+
+	create_binary_mipmap_level<<<blocks, threads>>>(*binary_mipmap, *suppressed, width, height, mipmap_width, mipmap_height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	// Save mipmap to images
+	write_device_texture_to_file((output_name + "suppressed_mipmap.png").c_str(), binary_mipmap);
+
 /* Relaxed cone map generation: Baseline */
 	// Allocate device memory
 	TextureDevicePointer<unsigned char> cone_map{width, height, 4};
@@ -92,8 +104,6 @@ void convert_image(const char *filepath, bool depthmap = false) {
 
 	// Write result image to file
 	write_device_texture_to_file((output_name + "_relaxed_cone_map_baseline.png").c_str(), cone_map);
-
-/* Non maximum suppression */
 
 /* Relaxed cone map generation: Analytic */
 	// Launch kernel
@@ -137,32 +147,30 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	write_device_texture_to_file((output_name + "_local_max_4dirs.png").c_str(), dir_bit_image);
 
 
-// /* Create binary mipmaps */
-//	 int mipmap_width	= (width	+ 1) / 2;
-//	 int mipmap_height = (height + 1) / 2;
-//
-//	 unsigned char *d_binary_mipmap;
-//	 CUDA_CHECK(cudaMalloc(&d_binary_mipmap, mipmap_width * mipmap_height));
-//
-// 	create_binary_mipmap_level<<<blocks, threads>>>(d_binary_mipmap, *local_max_8dirs, width, height, mipmap_width, mipmap_height);
-// 	CUDA_CHECK(cudaDeviceSynchronize());
-//
-//	 CUDA_CHECK(cudaFree(d_dir_bit_image));
-//	 CUDA_CHECK(cudaMalloc(&d_dir_bit_image, mipmap_width * mipmap_height));
-//
-// 	// Any of the 8
-// 	bits_to_image<<<blocks, threads>>>(d_binary_mipmap, *dir_bit_image,
-// 																		mipmap_width, mipmap_height, 0b11111111);
-//	 CUDA_CHECK(cudaDeviceSynchronize());
-// 	write_device_texture_to_file((output_name + "_local_max_8dirs_mipmap.png").c_str(),
-// 															 *dir_bit_image, mipmap_width, mipmap_height, 1);
-//
-// 	// Any of the 4 axis aligned dirs
-// 	bits_to_image<<<blocks, threads>>>(d_binary_mipmap, *dir_bit_image,
-// 																		mipmap_width, mipmap_height, 0b01010101);
-//	 CUDA_CHECK(cudaDeviceSynchronize());
-// 	write_device_texture_to_file((output_name + "_local_max_4dirs_mipmap.png").c_str(),
-// 															 *dir_bit_image, mipmap_width, mipmap_height, 1);
+/* Create binary mipmaps */
+  // int mipmap_width  = (width  + 1) / 2;
+  // int mipmap_height = (height + 1) / 2;
+  //
+  // TextureDevicePointer<unsigned char> binary_mipmap{mipmap_width, mipmap_height, 1};
+
+	create_binary_mipmap_level<<<blocks, threads>>>(*binary_mipmap, *local_max_8dirs, width, height, mipmap_width, mipmap_height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	// Save mipmap to images
+  TextureDevicePointer<unsigned char> binary_mipmap_bit_image{mipmap_width, mipmap_height, 1};
+
+	// Any of the 8
+	bits_to_image<<<blocks, threads>>>(*binary_mipmap, *binary_mipmap_bit_image,
+																		mipmap_width, mipmap_height, 0b11111111);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+	write_device_texture_to_file((output_name + "_local_max_8dirs_mipmap.png").c_str(), binary_mipmap_bit_image);
+
+	// Any of the 4 axis aligned dirs
+	bits_to_image<<<blocks, threads>>>(*binary_mipmap, *binary_mipmap_bit_image,
+																		mipmap_width, mipmap_height, 0b01010101);
+  CUDA_CHECK(cudaDeviceSynchronize());
+	write_device_texture_to_file((output_name + "_local_max_4dirs_mipmap.png").c_str(), binary_mipmap_bit_image);
 
 /* Relaxed cone map generation: Discrete directions */
 	// Launch kernel

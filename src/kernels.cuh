@@ -32,6 +32,8 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char*
 
 __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, int width, int height);
 
+__global__ void create_binary_mipmap_level(unsigned char* binary_mipmap, unsigned char* input, int width, int height, int mipmap_width, int mipmap_height);
+
 // TODO template function???
 /* Cone maps */
 __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char* fod_image, float* gradient_dirs, unsigned char* watershed, unsigned char* cone_map, int width, int height);

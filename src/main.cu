@@ -34,6 +34,7 @@ void convert_image(const char *filepath, bool depthmap = false) {
 
   if (depthmap) {
 		invert<<<blocks, threads>>>(d_input_image, width, height);
+		CUDA_CHECK(cudaDeviceSynchronize());
   }
 
 /* First order derivatives */
@@ -51,17 +52,18 @@ void convert_image(const char *filepath, bool depthmap = false) {
                                         d_fod_dirs_image, d_fod, width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
-  // Write result image to file
-  write_device_texture_to_file((output_name + "_fod.png").c_str(), d_fod_image,
-                               width, height, 3);
-  write_device_texture_to_file((output_name + "_fod_dirs.png").c_str(),
-                               d_fod_dirs_image, width, height, 1);
+  // // Write result image to file
+  // write_device_texture_to_file((output_name + "_fod.png").c_str(), d_fod_image,
+  //                              width, height, 3);
+  // write_device_texture_to_file((output_name + "_fod_dirs.png").c_str(),
+  //                              d_fod_dirs_image, width, height, 1);
 
 /* Directional local maxima */
   // Allocate device memory
-  unsigned char *d_local_max_8dirs, *d_dir_bit_image;
+  unsigned char *d_local_max_8dirs, *d_dir_bit_image_8dirs, *d_dir_bit_image_4dirs;
   CUDA_CHECK(cudaMalloc(&d_local_max_8dirs, size));
-  CUDA_CHECK(cudaMalloc(&d_dir_bit_image, size));
+  CUDA_CHECK(cudaMalloc(&d_dir_bit_image_8dirs, size));
+  CUDA_CHECK(cudaMalloc(&d_dir_bit_image_4dirs, size));
 
   // Launch kernel
   local_max_8dirs<<<blocks, threads>>>(d_input_image, d_local_max_8dirs,
@@ -78,18 +80,18 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	// }
 
 	// Any of the 8
-	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
+	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image_8dirs,
 																		width, height, 0b11111111);
   CUDA_CHECK(cudaDeviceSynchronize());
-	write_device_texture_to_file((output_name + "_local_max_8dirs.png").c_str(),
-															 d_dir_bit_image, width, height, 1);
+	// write_device_texture_to_file((output_name + "_local_max_8dirs.png").c_str(),
+	// 														 d_dir_bit_image_8dirs, width, height, 1);
 
 	// Any of the 4 axis aligned dirs
-	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image,
+	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image_4dirs,
 																		width, height, 0b01010101);
   CUDA_CHECK(cudaDeviceSynchronize());
-	write_device_texture_to_file((output_name + "_local_max_4dirs.png").c_str(),
-															 d_dir_bit_image, width, height, 1);
+	// write_device_texture_to_file((output_name + "_local_max_4dirs.png").c_str(),
+	// 														 d_dir_bit_image_4dirs, width, height, 1);
 
 
 // /* Create binary mipmaps */
@@ -119,30 +121,31 @@ void convert_image(const char *filepath, bool depthmap = false) {
 // 	write_device_texture_to_file((output_name + "_local_max_4dirs_mipmap.png").c_str(),
 // 															 d_dir_bit_image, mipmap_width, mipmap_height, 1);
 
-/* Relaxed cone map generation */
-  // Allocate device memory
-  unsigned char *d_cone_map;
-  CUDA_CHECK(cudaMalloc(&d_cone_map, size * 4));
-
-  // Launch kernel
-  create_cone_map_8dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
-																						 d_local_max_8dirs, d_cone_map,
-																						 width, height);
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  // Write result image to file
-  write_device_texture_to_file((output_name + "_relaxed_cone_map_8dirs.png").c_str(),
-                               d_cone_map, width, height, 4);
-
-  // Launch kernel
-  create_cone_map_4dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
-																						 d_local_max_8dirs, d_cone_map,
-																						 width, height);
-  CUDA_CHECK(cudaDeviceSynchronize());
-
-  // Write result image to file
-  write_device_texture_to_file((output_name + "_relaxed_cone_map_4dirs.png").c_str(),
-                               d_cone_map, width, height, 4);
+// /* Relaxed cone map generation */
+//   // Allocate device memory
+//   unsigned char *d_cone_map;
+//   CUDA_CHECK(cudaMalloc(&d_cone_map, size * 4));
+//
+//   // Launch kernel
+//   create_cone_map_8dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
+// 																						 d_local_max_8dirs, d_cone_map,
+// 																						 width, height);
+//   CUDA_CHECK(cudaDeviceSynchronize());
+//
+//   // Write result image to file
+//   write_device_texture_to_file((output_name + "_relaxed_cone_map_8dirs.png").c_str(),
+//                                d_cone_map, width, height, 4);
+//
+//   // Launch kernel
+//   create_cone_map_4dirs<<<blocks, threads>>>(d_input_image, d_fod_image,
+// 																						 d_local_max_8dirs, d_cone_map,
+// 																						 width, height);
+//   CUDA_CHECK(cudaDeviceSynchronize());
+//
+//   // Write result image to file
+//   write_device_texture_to_file((output_name + "_relaxed_cone_map_4dirs.png").c_str(),
+//                                d_cone_map, width, height, 4);
+//   CUDA_CHECK(cudaDeviceSynchronize());
 
 
 /* Second order derivatives and watershed */
@@ -156,11 +159,11 @@ void convert_image(const char *filepath, bool depthmap = false) {
 																				 width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
-  // Write result image to file
-  write_device_texture_to_file((output_name + "_sod.png").c_str(), d_sod_image,
-                               width, height, 4);
-  write_device_texture_to_file((output_name + "_watershed.png").c_str(), d_watershed,
-                               width, height, 1);
+  // // Write result image to file
+  // write_device_texture_to_file((output_name + "_sod.png").c_str(), d_sod_image,
+  //                              width, height, 4);
+  // write_device_texture_to_file((output_name + "_watershed.png").c_str(), d_watershed,
+  //                              width, height, 1);
 
 /* Non maximum suppression */
   // Allocate device memory
@@ -173,20 +176,109 @@ void convert_image(const char *filepath, bool depthmap = false) {
                                                width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
-  // Write result image to file
-  write_device_texture_to_file((output_name + "_suppressed.png").c_str(),
-                               d_suppressed, width, height, 1);
+  // // Write result image to file
+  // write_device_texture_to_file((output_name + "_suppressed.png").c_str(),
+  //                              d_suppressed, width, height, 1);
 
 
-/* Relaxed cone map generation */
+// /* Relaxed cone map generation */
+//   // Launch kernel
+//   create_cone_map_analytic<<<blocks, threads>>>(d_input_image, d_fod_image, d_fod_dirs, d_suppressed,
+// 																								d_cone_map, width, height);
+//   CUDA_CHECK(cudaDeviceSynchronize());
+//
+//   // Write result image to file
+//   write_device_texture_to_file((output_name + "_relaxed_cone_map_analytic.png").c_str(),
+//                                d_cone_map, width, height, 4);
+
+
+// --------------------------------------------------------------------------------------
+
+/* Invert map and calculate rivers */
+	invert<<<blocks, threads>>>(d_input_image, width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+/* First order derivatives */
+
   // Launch kernel
-  create_cone_map_analytic<<<blocks, threads>>>(d_input_image, d_fod_image, d_fod_dirs, d_suppressed,
-																								d_cone_map, width, height);
+  first_derivative<<<blocks, threads>>>(d_input_image, d_fod_image, d_fod_dirs,
+                                        d_fod_dirs_image, d_fod, width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+/* Directional local maxima */
+
+  // Launch kernel
+  local_max_8dirs<<<blocks, threads>>>(d_input_image, d_local_max_8dirs,
+																			 width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  // Allocate device memory
+  unsigned char *d_dir_bit_image_rivers_8dirs,  *d_dir_bit_image_rivers_4dirs;
+  CUDA_CHECK(cudaMalloc(&d_dir_bit_image_rivers_8dirs, size));
+  CUDA_CHECK(cudaMalloc(&d_dir_bit_image_rivers_4dirs, size));
+
+	// Any of the 8
+	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image_rivers_8dirs,
+																		width, height, 0b11111111);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+	// Any of the 4 axis aligned dirs
+	bits_to_image<<<blocks, threads>>>(d_local_max_8dirs, d_dir_bit_image_rivers_4dirs,
+																		width, height, 0b01010101);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+/* Second order derivatives and watershed */
+  // Allocate device memory
+  // Launch kernel
+  second_derivative<<<blocks, threads>>>(d_fod, d_sod_image, d_watershed,
+																				 width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+/* Non maximum suppression */
+  // Allocate device memory
+  unsigned char *d_rivers_suppressed;
+  CUDA_CHECK(cudaMalloc(&d_rivers_suppressed, size));
+
+  // Launch kernel
+  non_maximum_suppression<<<blocks, threads>>>(d_input_image, d_fod_dirs,
+                                               d_watershed, d_rivers_suppressed,
+                                               width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  unsigned char *d_watershed_and_river_image;
+  CUDA_CHECK(cudaMalloc(&d_watershed_and_river_image, size * 3));
+  
+  // Launch kernel
+  combine_watersheds_with_rivers<<<blocks, threads>>>(d_dir_bit_image_8dirs, d_dir_bit_image_rivers_8dirs,
+																											d_watershed_and_river_image,
+																											width, height);
   CUDA_CHECK(cudaDeviceSynchronize());
 
   // Write result image to file
-  write_device_texture_to_file((output_name + "_relaxed_cone_map_analytic.png").c_str(),
-                               d_cone_map, width, height, 4);
+  write_device_texture_to_file((output_name + "_watersheds_and_rivers_8dirs.png").c_str(),
+                               d_watershed_and_river_image, width, height, 3);
+  
+  // Launch kernel
+  combine_watersheds_with_rivers<<<blocks, threads>>>(d_dir_bit_image_4dirs, d_dir_bit_image_rivers_4dirs,
+																											d_watershed_and_river_image,
+																											width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  // Write result image to file
+  write_device_texture_to_file((output_name + "_watersheds_and_rivers_4dirs.png").c_str(),
+                               d_watershed_and_river_image, width, height, 3);
+  
+  // Launch kernel
+  combine_watersheds_with_rivers<<<blocks, threads>>>(d_suppressed, d_rivers_suppressed,
+																											d_watershed_and_river_image,
+																											width, height);
+  CUDA_CHECK(cudaDeviceSynchronize());
+
+  // Write result image to file
+  write_device_texture_to_file((output_name + "_watersheds_and_rivers_analytic.png").c_str(),
+                               d_watershed_and_river_image, width, height, 3);
+
+// --------------------------------------------------------------------------------------
 
 /* Cleanup */
   CUDA_CHECK(cudaFree(d_input_image));
@@ -197,10 +289,16 @@ void convert_image(const char *filepath, bool depthmap = false) {
   CUDA_CHECK(cudaFree(d_sod_image));
   CUDA_CHECK(cudaFree(d_watershed));
   CUDA_CHECK(cudaFree(d_suppressed));
+  CUDA_CHECK(cudaFree(d_rivers_suppressed));
   CUDA_CHECK(cudaFree(d_local_max_8dirs));
-  CUDA_CHECK(cudaFree(d_dir_bit_image));
+  CUDA_CHECK(cudaFree(d_dir_bit_image_8dirs));
+  CUDA_CHECK(cudaFree(d_dir_bit_image_4dirs));
+  CUDA_CHECK(cudaFree(d_dir_bit_image_rivers_8dirs));
+  CUDA_CHECK(cudaFree(d_dir_bit_image_rivers_4dirs));
+  // CUDA_CHECK(cudaFree(d_dir_bit_image));
   // CUDA_CHECK(cudaFree(d_binary_mipmap));
-  CUDA_CHECK(cudaFree(d_cone_map));
+  // CUDA_CHECK(cudaFree(d_cone_map));
+  CUDA_CHECK(cudaFree(d_watershed_and_river_image));
 }
 
 int main(int argc, char* argv[]) {

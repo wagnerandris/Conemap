@@ -774,3 +774,15 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char
 	cone_map[(v * width + u) * 4 + 2] = fod_image[(v * width + u) * 3];
 	cone_map[(v * width + u) * 4 + 3] = fod_image[(v * width + u) * 3 + 1];
 }
+
+
+__global__ void combine_watersheds_with_rivers(unsigned char* d_dir_bit_image, unsigned char* d_dir_bit_image_rivers, unsigned char* d_watershed_and_river_image, int width, int height) {
+  int u = blockIdx.x * blockDim.x + threadIdx.x;
+  int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (u >= width || v >= height) return;
+	
+	d_watershed_and_river_image[(v * width + u) * 3] = d_dir_bit_image[v * width + u];
+	d_watershed_and_river_image[(v * width + u) * 3 + 1] = 0;
+	d_watershed_and_river_image[(v * width + u) * 3 + 2] = d_dir_bit_image_rivers[v * width + u];
+}

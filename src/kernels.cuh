@@ -30,3 +30,5 @@ __global__ void second_derivative(int* fod, unsigned char* sod_image, unsigned c
 __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char* dirs, unsigned char* watershed_image, unsigned char* suppressed_image, int width, int height);
 
 __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char* fod_image, unsigned char* dirs, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height);
+
+__global__ void combine_watersheds_with_rivers(unsigned char* d_dir_bit_image, unsigned char* d_dir_bit_image_rivers, unsigned char* d_watershed_and_river_image, int width, int height);

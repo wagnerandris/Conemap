@@ -24,6 +24,8 @@ inline void gpuAssert(cudaError_t code, const char *file, int line)
 	}
 }
 
+#include "Texture.cuh"
+
 // TODO more sophisticated checks? (file exists etc)
 inline bool read_texture_to_device(unsigned char* &device_pointer, const char* filepath, int* width, int* height, int* channels) {
 	// load data
@@ -51,6 +53,23 @@ inline bool write_device_texture_to_file(const char* filepath, unsigned char* de
 
 	// write to file
 	if (!stbi_write_png(filepath, width, height, channels, h_data, width * channels)) {
+		fprintf(stderr, "Could not write image to %s\n", filepath);
+		delete[] h_data;
+		return false;
+	};
+	delete[] h_data;
+	printf("Written image as %s\n", filepath);
+	return true;
+}
+
+inline bool write_device_texture_to_file(const char* filepath, Texture<unsigned char> &tex) {
+	// copy to host
+	int size = tex.width * tex.height * tex.channels;
+	unsigned char* h_data = new unsigned char[size];
+	CUDA_CHECK(cudaMemcpy(h_data, tex.device_pointer, size, cudaMemcpyDeviceToHost));
+
+	// write to file
+	if (!stbi_write_png(filepath, tex.width, tex.height, tex.channels, h_data, tex.width * tex.channels)) {
 		fprintf(stderr, "Could not write image to %s\n", filepath);
 		delete[] h_data;
 		return false;

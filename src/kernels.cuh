@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Texture.cuh"
+
 // TODO is Sobel better than Prewitt?
 __device__ __constant__ float vkernel[9] = {
  -1,-2,-1,
@@ -39,4 +41,6 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char
 __global__ void create_cone_map_8dirs(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
 
 __global__ void create_cone_map_4dirs(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
+
+__global__ void create_cone_map_4dirs_test(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, TextureView<unsigned char> cone_map, int width, int height);
 

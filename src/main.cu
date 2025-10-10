@@ -9,6 +9,7 @@
 
 #include "file_utils.cuh"
 #include "kernels.cuh"
+#include "Texture.cuh"
 
 static std::filesystem::path output_path;
 
@@ -198,6 +199,18 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	// Write result image to file
 	write_device_texture_to_file((output_name + "_relaxed_cone_map_4dirs.png").c_str(),
 															 d_cone_map, width, height, 4);
+
+	Texture<unsigned char> cone_map{width, height, 4};
+
+	// Launch kernel
+	create_cone_map_4dirs_test<<<blocks, threads>>>(d_input_image, d_fod_image,
+																						 d_local_max_8dirs, cone_map(),
+																						 width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	// Write result image to file
+	write_device_texture_to_file((output_name + "_relaxed_cone_map_4dirs_test.png").c_str(),
+															 cone_map);
 
 
 /* Cleanup */

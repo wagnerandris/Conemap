@@ -32,6 +32,8 @@ __global__ void local_max_8dirs(unsigned char* heightmap, unsigned char* local_m
 
 // TODO template function???
 /* Cone maps */
+__global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char* fod_image, float* gradient_dirs, unsigned char* watershed, unsigned char* cone_map, int width, int height);
+
 __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char* fod_image, unsigned char* dirs, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height);
 
 __global__ void create_cone_map_8dirs(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);

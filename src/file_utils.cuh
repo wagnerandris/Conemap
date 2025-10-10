@@ -17,44 +17,44 @@
 
 inline void gpuAssert(cudaError_t code, const char *file, int line)
 {
-  if (code != cudaSuccess)
-  {
-    fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-    exit(code);
-  }
+	if (code != cudaSuccess)
+	{
+		fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+		exit(code);
+	}
 }
 
 // TODO more sophisticated checks? (file exists etc)
 inline bool read_texture_to_device(unsigned char* &device_pointer, const char* filepath, int* width, int* height, int* channels) {
 	// load data
-  unsigned char* data = stbi_load(filepath, width, height, channels, 1);
-  if (!data) {
-    fprintf(stderr, "Could not load texture from %s.\n", filepath);
-    return false;
-  }
+	unsigned char* data = stbi_load(filepath, width, height, channels, 1);
+	if (!data) {
+		fprintf(stderr, "Could not load texture from %s.\n", filepath);
+		return false;
+	}
 
 	// copy to device
 	int size = (*width) * (*height);
-  CUDA_CHECK(cudaMalloc(&device_pointer, size));
-  CUDA_CHECK(cudaMemcpy(device_pointer, data, size, cudaMemcpyHostToDevice));
-  free(data);
+	CUDA_CHECK(cudaMalloc(&device_pointer, size));
+	CUDA_CHECK(cudaMemcpy(device_pointer, data, size, cudaMemcpyHostToDevice));
+	free(data);
 
-  printf("Loaded texture from %s.\nWidth: %d, Height: %d\n", filepath, *width, *height);
-  return true;
+	printf("Loaded texture from %s.\nWidth: %d, Height: %d\n", filepath, *width, *height);
+	return true;
 }
 
 inline bool write_device_texture_to_file(const char* filepath, unsigned char* device_pointer, int width, int height, int channels) {
 	// copy to host
 	int size = width * height * channels;
-  unsigned char* h_data = new unsigned char[size];
-  CUDA_CHECK(cudaMemcpy(h_data, device_pointer, size, cudaMemcpyDeviceToHost));
+	unsigned char* h_data = new unsigned char[size];
+	CUDA_CHECK(cudaMemcpy(h_data, device_pointer, size, cudaMemcpyDeviceToHost));
 
 	// write to file
-  if (!stbi_write_png(filepath, width, height, channels, h_data, width * channels)) {
-  	fprintf(stderr, "Could not write image to %s\n", filepath);
+	if (!stbi_write_png(filepath, width, height, channels, h_data, width * channels)) {
+		fprintf(stderr, "Could not write image to %s\n", filepath);
 		delete[] h_data;
 		return false;
-  };
+	};
 	delete[] h_data;
 	printf("Written image as %s\n", filepath);
 	return true;

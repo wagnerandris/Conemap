@@ -1,6 +1,7 @@
 #pragma once
 
 // STD
+#include <stdexcept>
 #include <stdio.h>
 
 // STB
@@ -45,28 +46,30 @@ inline bool read_texture_to_device(unsigned char* &device_pointer, const char* f
 	return true;
 }
 
-inline bool write_device_texture_to_file(const char* filepath, unsigned char* device_pointer, int width, int height, int channels) {
-	// copy to host
-	int size = width * height * channels;
-	unsigned char* h_data = new unsigned char[size];
-	CUDA_CHECK(cudaMemcpy(h_data, device_pointer, size, cudaMemcpyDeviceToHost));
+// TODO more sophisticated checks? (file exists etc)
+inline TextureDevicePointer<unsigned char> read_texture_to_device(const char* filepath) {
+	int width;
+	int height;
+	int channels;
+	unsigned char* data;
+	// load data
+	data = stbi_load(filepath, &width, &height, &channels, 1);
+	if (!data) {
+		fprintf(stderr, "Could not load texture from %s.\n", filepath);
+		return TextureDevicePointer<unsigned char>{0, 0, 0, nullptr};
+	}
 
-	// write to file
-	if (!stbi_write_png(filepath, width, height, channels, h_data, width * channels)) {
-		fprintf(stderr, "Could not write image to %s\n", filepath);
-		delete[] h_data;
-		return false;
-	};
-	delete[] h_data;
-	printf("Written image as %s\n", filepath);
-	return true;
+	printf("Loaded texture from %s.\nWidth: %d, Height: %d\n", filepath, width, height);
+	return TextureDevicePointer<unsigned char>{width, height, 1, data};
+	free(data);
 }
 
-inline bool write_device_texture_to_file(const char* filepath, Texture<unsigned char> &tex) {
+
+inline bool write_device_texture_to_file(const char* filepath, TextureDevicePointer<unsigned char> &tex) {
 	// copy to host
 	int size = tex.width * tex.height * tex.channels;
 	unsigned char* h_data = new unsigned char[size];
-	CUDA_CHECK(cudaMemcpy(h_data, tex.device_pointer, size, cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(h_data, *tex, size, cudaMemcpyDeviceToHost));
 
 	// write to file
 	if (!stbi_write_png(filepath, tex.width, tex.height, tex.channels, h_data, tex.width * tex.channels)) {

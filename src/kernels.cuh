@@ -30,7 +30,7 @@ __global__ void sod_and_watershed(int* fod, unsigned char* sod_image, unsigned c
 /* Local maxima */
 __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char* dirs, unsigned char* watershed_image, unsigned char* suppressed_image, int width, int height);
 
-__global__ void local_max_8dirs(unsigned char* heightmap, unsigned char* local_max_8dirs, int width, int height);
+__global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, int width, int height);
 
 // TODO template function???
 /* Cone maps */
@@ -38,9 +38,6 @@ __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char
 
 __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char* fod_image, unsigned char* dirs, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height);
 
-__global__ void create_cone_map_8dirs(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
+__global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
 
-__global__ void create_cone_map_4dirs(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
-
-__global__ void create_cone_map_4dirs_test(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, TextureView<unsigned char> cone_map, int width, int height);
-
+__global__ void create_cone_map_4dir(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);

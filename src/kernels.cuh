@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Texture.cuh"
-
 // TODO is Sobel better than Prewitt?
 __device__ __constant__ float vkernel[9] = {
  -1,-2,-1,
@@ -32,7 +30,9 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char*
 
 __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, int width, int height);
 
-__global__ void create_binary_mipmap_level(unsigned char* binary_mipmap, unsigned char* input, int width, int height, int mipmap_width, int mipmap_height);
+__global__ void create_binary_mipmap_level(unsigned char* input, int width, int height, unsigned char* binary_mipmap, int mipmap_width, int mipmap_height);
+
+__global__ void create_max_mipmap_level(unsigned char* input, int width, int height, unsigned char* max_mipmap, int mipmap_width, int mipmap_height);
 
 // TODO template function???
 /* Cone maps */

@@ -24,7 +24,7 @@ bool find_neighbours_on_path(unsigned char* heightmap, unsigned char* watershed,
 	for (int cv = std::max(current.v - 1, 0); cv <= std::min(current.v + 1, height - 1); ++cv) {
 		for (int cu = std::max(current.u - 1, 0); cu <= std::min(current.u + 1, width - 1); ++cu) {
 			int cidx = cv * width + cu;
-			if (!watershed[cidx] || current.v * width + current.u == cidx) continue; // not a neighbour on path
+			if (!watershed[cidx]) continue; // not a neighbour on path (current is already removed from watershed)
 
 			if (heightmap[cidx] < current.h) return false; // current is not minimal
 
@@ -32,6 +32,30 @@ bool find_neighbours_on_path(unsigned char* heightmap, unsigned char* watershed,
 		}
 	}
 	return true;
+}
+
+bool descend_on_path(unsigned char* heightmap, unsigned char* watershed, int width, int height, SurfacePoint &current) {
+	SurfacePoint mp;
+	unsigned char min = current.h;
+
+	// find all valid neighbours
+	for (int cv = std::max(current.v - 1, 0); cv <= std::min(current.v + 1, height - 1); ++cv) {
+		for (int cu = std::max(current.u - 1, 0); cu <= std::min(current.u + 1, width - 1); ++cu) {
+			int cidx = (cv * width + cu);
+			unsigned char ch = heightmap[cidx];
+			if (current.v * width + current.u == cidx || !watershed[cidx] || // not a neighbour on path
+					ch >= min) // not lower than current min
+				continue; 
+
+			min = ch;
+			mp = SurfacePoint{cu, cv, ch};
+		}
+	}
+
+	if (min == current.h) return false; // haven't found anywhere to go
+
+	current = mp;
+	return true; // we need to continue
 }
 
 bool continue_path(unsigned char* heightmap, unsigned char* watershed, std::vector<SurfacePoint> &path, int width, int height) {
@@ -44,7 +68,7 @@ bool continue_path(unsigned char* heightmap, unsigned char* watershed, std::vect
 		for (int cu = std::max(current.u - 1, 0); cu <= std::min(current.u + 1, width - 1); ++cu) {
 			int cidx = (cv * width + cu);
 			unsigned char ch = heightmap[cidx];
-			if (current.v * width + current.u == cidx || !watershed[cidx] || // not a neighbour on path
+			if (!watershed[cidx] || // not a neighbour on path (current is already removed from watershed)
 					ch < current.h || // lower than current
 					ch >= min) // already found lower neighbour
 				continue; 
@@ -65,36 +89,70 @@ void find_climbing_paths(unsigned char* heightmap, unsigned char* watershed, std
 	for (int u = 0; u < width; ++u) {
 		for (int v = 0; v < height; ++v) {
 			int idx = v * width + u;
-			if (!watershed[idx]) continue;
-			
-			SurfacePoint current{u, v, heightmap[idx]};
+			// repeat until the current texel is added to a path (and removed from watershed)
+			while (watershed[idx]) {
+				// starting from the current texel
+				SurfacePoint current{u, v, heightmap[idx]};
+				
+				// descend on the steepest path
+				while (descend_on_path(heightmap, watershed, width, height, current));
+				watershed[current.v * width + current.u] = 0;
 
-			std::vector<SurfacePoint> neighbours;
-			// find all valid neighbours
-			if (!find_neighbours_on_path(heightmap, watershed, width, height, current, neighbours)) continue; // if we weren't at a local minimum
+				// find all valid neighbours
+				std::vector<SurfacePoint> neighbours;
+				if (!find_neighbours_on_path(heightmap, watershed, width, height, current, neighbours)) continue; // if we weren't at a local minimum
 
-			if (neighbours.size() == 0) {
-				watershed[idx] = 0;
-				paths.push_back(std::vector<SurfacePoint>{current});
-				continue;
+				if (neighbours.size() == 0) {
+					paths.push_back(std::vector<SurfacePoint>{current});
+					continue;
+				}
+
+				// sort based on height
+				std::sort(neighbours.begin(), neighbours.end(), [](SurfacePoint &a, SurfacePoint &b){return a.h < b.h;});
+
+				// start a path in all directions not yet covered
+				for (SurfacePoint neighbour : neighbours) {
+					int nidx = neighbour.v * width + neighbour.u;
+					if (!watershed[nidx]) continue;
+
+					watershed[nidx] = 0;
+					paths.push_back(std::vector<SurfacePoint>{current, neighbour});
+					while (continue_path(heightmap, watershed, paths.back(), width, height));
+				}
 			}
-
-			// sort based on height
-			std::sort(neighbours.begin(), neighbours.end(), [](SurfacePoint &a, SurfacePoint &b){return a.h < b.h;});
-
-			for (SurfacePoint neighbour : neighbours) {
-				int nidx = neighbour.v * width + neighbour.u;
-				if (!watershed[nidx]) continue;
-
-				watershed[idx] = 0;
-				watershed[nidx] = 0;
-				paths.push_back(std::vector<SurfacePoint>{current, neighbour});
-				while (continue_path(heightmap, watershed, paths.back(), width, height));
-			}
+				
 		}
 	}
 }
-// TODO copy to host, run, mark climbing paths with random colors, print
+
+void display_paths(const char* filename, std::vector<std::vector<SurfacePoint>> &paths, int width, int height) {
+	int sum = 0;
+	for (auto path : paths) {
+		sum += path.size();
+	}
+	std::cout << "Texels: " << sum << '\n';
+	std::cout << "Paths: " << paths.size() << '\n';
+	std::cout << "Average texels per path: " << static_cast<float>(sum) / paths.size() << '\n';
+
+	// TextureHostPointer<unsigned char> h_paths{width, height, 1};
+	TextureHostPointer<unsigned char> h_paths{width, height, 3};
+
+	for (auto path : paths) {
+		uchar3 color;
+		color.x = rand() % 256;
+		color.y = rand() % 256;
+		color.z = rand() % 256;
+		for (SurfacePoint point : path) {
+			// (*h_paths)[point.v * width + point.u] = 255;
+			int idx = (point.v * width + point.u) * 3;
+			(*h_paths)[idx]		 = color.x;
+			(*h_paths)[idx + 1] = color.y;
+			(*h_paths)[idx + 2] = color.z;
+		}
+	}
+
+	write_host_texture_to_file(filename, h_paths);
+}
 
 static std::filesystem::path output_path;
 
@@ -121,23 +179,23 @@ void convert_image(const char *filepath, bool depthmap = false) {
 		invert<<<blocks, threads>>>(*input_image, width, height);
 	}
 
-/* First order derivatives */
-	// Allocate device memory
-	TextureDevicePointer<int> fods{width, height, 2};
-	TextureDevicePointer<float> fod_exact_dirs{width, height, 1};
-	TextureDevicePointer<unsigned char>
-		fod_image{width, height, 3},
-		fod_discrete_dirs{width, height, 1},
-		fod_dirs_image{width, height, 1};
-
-	// Launch kernel
-	fod<<<blocks, threads>>>(*input_image, *fods, *fod_image, *fod_exact_dirs, *fod_discrete_dirs, *fod_dirs_image, width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_fod.png").c_str(), fod_image);
-	write_device_texture_to_file((output_name + "_fod_dirs.png").c_str(), fod_dirs_image);
-
+// /* First order derivatives */
+// 	// Allocate device memory
+// 	TextureDevicePointer<int> fods{width, height, 2};
+// 	TextureDevicePointer<float> fod_exact_dirs{width, height, 1};
+// 	TextureDevicePointer<unsigned char>
+// 		fod_image{width, height, 3},
+// 		fod_discrete_dirs{width, height, 1},
+// 		fod_dirs_image{width, height, 1};
+//
+// 	// Launch kernel
+// 	fod<<<blocks, threads>>>(*input_image, *fods, *fod_image, *fod_exact_dirs, *fod_discrete_dirs, *fod_dirs_image, width, height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 	// Write result image to file
+// 	write_device_texture_to_file((output_name + "_fod.png").c_str(), fod_image);
+// 	write_device_texture_to_file((output_name + "_fod_dirs.png").c_str(), fod_dirs_image);
+//
 // /* Second order derivatives and watershed */
 // 	// Allocate device memory
 // 	TextureDevicePointer<unsigned char>
@@ -216,36 +274,38 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	// write_device_texture_to_file((output_name + "_local_max_dir1.png").c_str(), dir_bit_image);
 
 	std::vector<std::vector<SurfacePoint>> paths;
+
 	TextureHostPointer<unsigned char> h_heightmap{input_image};
 	write_host_texture_to_file((output_name + "_heightmap.png").c_str(), h_heightmap);
+
+	// dir1
 	TextureHostPointer<unsigned char> h_watershed1{dir_bit_image};
 	write_host_texture_to_file((output_name + "_local_max_dir1.png").c_str(), h_watershed1);
 	
 	find_climbing_paths(*h_heightmap, *h_watershed1, paths, width, height);
 
-	int sum = 0;
-	for (auto path : paths) {
-		sum += path.size();
-	}
-	std::cout << sum << '\n';
-	std::cout << paths.size() << '\n';
+	display_paths((output_name + "dir1_climbing_paths.png").c_str(), paths, width, height);
+	
+	// 4dirs
+	bits_to_image<<<blocks, threads>>>(*local_max_8dirs, *dir_bit_image,
+																		width, height, 0b01010101);
+	CUDA_CHECK(cudaDeviceSynchronize());
+	TextureHostPointer<unsigned char> h_local_max_4dirs{dir_bit_image};
+	write_host_texture_to_file((output_name + "_local_max_4dirs.png").c_str(), h_local_max_4dirs);
+	
+	paths.clear();
+	find_climbing_paths(*h_heightmap, *h_local_max_4dirs, paths, width, height);
 
-	TextureHostPointer<unsigned char> h_paths{width, height, 3};
+	display_paths((output_name + "local_max_4dir_climbing_paths.png").c_str(), paths, width, height);
 
-	for (auto path : paths) {
-		uchar3 color;
-		color.x = rand() % 256;
-		color.y = rand() % 256;
-		color.z = rand() % 256;
-		for (SurfacePoint point : path) {
-			int idx = (point.v * width + point.u) * 3;
-			(*h_paths)[idx]		 = color.x;
-			(*h_paths)[idx + 1] = color.y;
-			(*h_paths)[idx + 2] = color.z;
-		}
-	}
+	// 8dirs
+	TextureHostPointer<unsigned char> h_local_max_8dirs{local_max_8dirs};
+	write_host_texture_to_file((output_name + "_local_max_8dirs.png").c_str(), h_local_max_8dirs);
+	
+	paths.clear();
+	find_climbing_paths(*h_heightmap, *h_local_max_8dirs, paths, width, height);
 
-	write_host_texture_to_file((output_name + "dir1_climbing_paths.png").c_str(), h_paths);
+	display_paths((output_name + "local_max_8dir_climbing_paths.png").c_str(), paths, width, height);
 
 //
 // 	// Any of the 8

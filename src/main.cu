@@ -19,21 +19,6 @@ struct SurfacePoint {
 	unsigned char h;
 };
 
-
-bool find_neighbours_on_path(unsigned char* heightmap, unsigned char* watershed, int width, int height, SurfacePoint &current, std::vector<SurfacePoint> &neighbours) {
-	for (int cv = std::max(current.v - 1, 0); cv <= std::min(current.v + 1, height - 1); ++cv) {
-		for (int cu = std::max(current.u - 1, 0); cu <= std::min(current.u + 1, width - 1); ++cu) {
-			int cidx = cv * width + cu;
-			if (!watershed[cidx]) continue; // not a neighbour on path (current is already removed from watershed)
-
-			if (heightmap[cidx] < current.h) return false; // current is not minimal
-
-			neighbours.push_back(SurfacePoint{cu, cv, heightmap[cidx]});
-		}
-	}
-	return true;
-}
-
 bool descend_on_path(unsigned char* heightmap, unsigned char* watershed, int width, int height, SurfacePoint &current) {
 	SurfacePoint mp;
 	unsigned char min = current.h;
@@ -96,31 +81,12 @@ void find_climbing_paths(unsigned char* heightmap, unsigned char* watershed, std
 				
 				// descend on the steepest path
 				while (descend_on_path(heightmap, watershed, width, height, current));
+
+				// ascend on the shallowest path
 				watershed[current.v * width + current.u] = 0;
-
-				// find all valid neighbours
-				std::vector<SurfacePoint> neighbours;
-				if (!find_neighbours_on_path(heightmap, watershed, width, height, current, neighbours)) continue; // if we weren't at a local minimum
-
-				if (neighbours.size() == 0) {
-					paths.push_back(std::vector<SurfacePoint>{current});
-					continue;
-				}
-
-				// sort based on height
-				std::sort(neighbours.begin(), neighbours.end(), [](SurfacePoint &a, SurfacePoint &b){return a.h < b.h;});
-
-				// start a path in all directions not yet covered
-				for (SurfacePoint neighbour : neighbours) {
-					int nidx = neighbour.v * width + neighbour.u;
-					if (!watershed[nidx]) continue;
-
-					watershed[nidx] = 0;
-					paths.push_back(std::vector<SurfacePoint>{current, neighbour});
-					while (continue_path(heightmap, watershed, paths.back(), width, height));
-				}
+				paths.push_back(std::vector<SurfacePoint>{current});
+				while (continue_path(heightmap, watershed, paths.back(), width, height));
 			}
-				
 		}
 	}
 }

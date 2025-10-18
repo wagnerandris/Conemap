@@ -64,6 +64,21 @@ inline TextureDevicePointer<unsigned char> read_texture_to_device(const char* fi
 	free(data);
 }
 
+inline TextureHostPointer<unsigned char> read_texture_to_host(const char* filepath) {
+	int width;
+	int height;
+	int channels;
+	unsigned char* data;
+	// load data
+	data = stbi_load(filepath, &width, &height, &channels, 1);
+	if (!data) {
+		fprintf(stderr, "Could not load texture from %s.\n", filepath);
+		return TextureHostPointer<unsigned char>{0, 0, 0, nullptr};
+	}
+
+	printf("Loaded texture from %s.\nWidth: %d, Height: %d\n", filepath, width, height);
+	return TextureHostPointer<unsigned char>{width, height, 1, data};
+}
 
 inline bool write_device_texture_to_file(const char* filepath, TextureDevicePointer<unsigned char> &tex) {
 	// copy to host
@@ -78,6 +93,16 @@ inline bool write_device_texture_to_file(const char* filepath, TextureDevicePoin
 		return false;
 	};
 	delete[] h_data;
+	printf("Written image as %s\n", filepath);
+	return true;
+}
+
+inline bool write_host_texture_to_file(const char* filepath, TextureHostPointer<unsigned char> &tex) {
+	// write to file
+	if (!stbi_write_png(filepath, tex.width, tex.height, tex.channels, *tex, tex.width * tex.channels)) {
+		fprintf(stderr, "Could not write image to %s\n", filepath);
+		return false;
+	};
 	printf("Written image as %s\n", filepath);
 	return true;
 }

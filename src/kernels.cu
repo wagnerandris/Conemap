@@ -39,9 +39,9 @@ __global__ void fod(unsigned char* heightmap, int* fods, unsigned char* fod_imag
 	int vsum = 0;
 	for (int dv = 0; dv < 3; ++dv) {
 		for (int du = 0; du < 3; ++du) {
-			 int cu = min(max(u + du - 1, 0), width - 1);
-			 int cv = min(max(v + dv - 1, 0), height - 1);
-			 int cidx = (cv * width + cu);
+			int cu = min(max(u + du - 1, 0), width - 1);
+			int cv = min(max(v + dv - 1, 0), height - 1);
+			int cidx = (cv * width + cu);
 			hsum += heightmap[cidx] * hkernel[dv * 3 + du];
 			vsum += heightmap[cidx] * vkernel[dv * 3 + du];
 		}

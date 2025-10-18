@@ -1,4 +1,6 @@
 // STD
+#include <algorithm>
+#include <cstdlib>
 #include <iostream>
 #include <filesystem>
 #include <string>
@@ -11,13 +13,96 @@
 #include "kernels.cuh"
 #include "Texture.cuh"
 
+struct SurfacePoint {
+	int u;
+	int v;
+	unsigned char h;
+};
+
+
+bool find_neighbours_on_path(unsigned char* heightmap, unsigned char* watershed, int width, int height, SurfacePoint &current, std::vector<SurfacePoint> &neighbours) {
+	for (int cv = std::max(current.v - 1, 0); cv <= std::min(current.v + 1, height - 1); ++cv) {
+		for (int cu = std::max(current.u - 1, 0); cu <= std::min(current.u + 1, width - 1); ++cu) {
+			int cidx = cv * width + cu;
+			if (!watershed[cidx] || current.v * width + current.u == cidx) continue; // not a neighbour on path
+
+			if (heightmap[cidx] < current.h) return false; // current is not minimal
+
+			neighbours.push_back(SurfacePoint{cu, cv, heightmap[cidx]});
+		}
+	}
+	return true;
+}
+
+bool continue_path(unsigned char* heightmap, unsigned char* watershed, std::vector<SurfacePoint> &path, int width, int height) {
+	SurfacePoint &current = path.back();
+	SurfacePoint mp;
+	int min = 256;
+
+	// find all valid neighbours
+	for (int cv = std::max(current.v - 1, 0); cv <= std::min(current.v + 1, height - 1); ++cv) {
+		for (int cu = std::max(current.u - 1, 0); cu <= std::min(current.u + 1, width - 1); ++cu) {
+			int cidx = (cv * width + cu);
+			unsigned char ch = heightmap[cidx];
+			if (current.v * width + current.u == cidx || !watershed[cidx] || // not a neighbour on path
+					ch < current.h || // lower than current
+					ch >= min) // already found lower neighbour
+				continue; 
+
+			min = ch;
+			mp = SurfacePoint{cu, cv, ch};
+		}
+	}
+
+	if (min == 256) return false; // haven't found anywhere to go
+
+	watershed[mp.v * width + mp.u] = 0;
+	path.push_back(mp);
+	return true; // we need to continue
+}
+
+void find_climbing_paths(unsigned char* heightmap, unsigned char* watershed, std::vector<std::vector<SurfacePoint>> &paths, int width, int height) {
+	for (int u = 0; u < width; ++u) {
+		for (int v = 0; v < height; ++v) {
+			int idx = v * width + u;
+			if (!watershed[idx]) continue;
+			
+			SurfacePoint current{u, v, heightmap[idx]};
+
+			std::vector<SurfacePoint> neighbours;
+			// find all valid neighbours
+			if (!find_neighbours_on_path(heightmap, watershed, width, height, current, neighbours)) continue; // if we weren't at a local minimum
+
+			if (neighbours.size() == 0) {
+				watershed[idx] = 0;
+				paths.push_back(std::vector<SurfacePoint>{current});
+				continue;
+			}
+
+			// sort based on height
+			std::sort(neighbours.begin(), neighbours.end(), [](SurfacePoint &a, SurfacePoint &b){return a.h < b.h;});
+
+			for (SurfacePoint neighbour : neighbours) {
+				int nidx = neighbour.v * width + neighbour.u;
+				if (!watershed[nidx]) continue;
+
+				watershed[idx] = 0;
+				watershed[nidx] = 0;
+				paths.push_back(std::vector<SurfacePoint>{current, neighbour});
+				while (continue_path(heightmap, watershed, paths.back(), width, height));
+			}
+		}
+	}
+}
+// TODO copy to host, run, mark climbing paths with random colors, print
+
 static std::filesystem::path output_path;
 
 void convert_image(const char *filepath, bool depthmap = false) {
 
 	std::string output_name = depthmap ?
 		output_path / std::filesystem::path(filepath).stem().concat("_depthmap") :
-		output_path / std::filesystem::path(filepath).stem() ;
+		output_path / std::filesystem::path(filepath).stem();
 
 /* Load image */
 	TextureDevicePointer<unsigned char> input_image = read_texture_to_device(filepath);
@@ -53,56 +138,56 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	write_device_texture_to_file((output_name + "_fod.png").c_str(), fod_image);
 	write_device_texture_to_file((output_name + "_fod_dirs.png").c_str(), fod_dirs_image);
 
-/* Second order derivatives and watershed */
-	// Allocate device memory
-	TextureDevicePointer<unsigned char>
-		sod_image{width, height, 4},
-		watershed{width, height, 1};
-
-	// Launch kernel
-	sod_and_watershed<<<blocks, threads>>>(*fods, *sod_image, *watershed,
-																				 width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_sod.png").c_str(), sod_image);
-	write_device_texture_to_file((output_name + "_watershed.png").c_str(), watershed);
-
-/* Non maximum suppression */
-	// Allocate device memory
-	TextureDevicePointer<unsigned char> suppressed{width, height, 1};
-
-	// Launch kernel
-	non_maximum_suppression<<<blocks, threads>>>(*input_image, *fod_discrete_dirs,
-																							 *watershed, *suppressed,
-																							 width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_suppressed.png").c_str(), suppressed);
-
-/* Relaxed cone map generation: Baseline */
-	// Allocate device memory
-	TextureDevicePointer<unsigned char> cone_map{width, height, 4};
-
-	// Launch kernel
-	create_cone_map_baseline<<<blocks, threads>>>(*input_image, *fod_image, *fod_exact_dirs, *watershed, *cone_map,
-			width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_relaxed_cone_map_baseline.png").c_str(), cone_map);
-
-/* Non maximum suppression */
-
-/* Relaxed cone map generation: Analytic */
-	// Launch kernel
-	create_cone_map_analytic<<<blocks, threads>>>(*input_image, *fod_image, *fod_discrete_dirs, *suppressed,
-																								*cone_map, width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_relaxed_cone_map_analytic.png").c_str(), cone_map);
+// /* Second order derivatives and watershed */
+// 	// Allocate device memory
+// 	TextureDevicePointer<unsigned char>
+// 		sod_image{width, height, 4},
+// 		watershed{width, height, 1};
+//
+// 	// Launch kernel
+// 	sod_and_watershed<<<blocks, threads>>>(*fods, *sod_image, *watershed,
+// 																				 width, height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 	// Write result image to file
+// 	write_device_texture_to_file((output_name + "_sod.png").c_str(), sod_image);
+// 	write_device_texture_to_file((output_name + "_watershed.png").c_str(), watershed);
+//
+// /* Non maximum suppression */
+// 	// Allocate device memory
+// 	TextureDevicePointer<unsigned char> suppressed{width, height, 1};
+//
+// 	// Launch kernel
+// 	non_maximum_suppression<<<blocks, threads>>>(*input_image, *fod_discrete_dirs,
+// 																							 *watershed, *suppressed,
+// 																							 width, height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 	// Write result image to file
+// 	write_device_texture_to_file((output_name + "_suppressed.png").c_str(), suppressed);
+//
+// /* Relaxed cone map generation: Baseline */
+//	// Allocate device memory
+//	TextureDevicePointer<unsigned char> cone_map{width, height, 4};
+//
+// 	// Launch kernel
+// 	create_cone_map_baseline<<<blocks, threads>>>(*input_image, *fod_image, *fod_exact_dirs, *watershed, *cone_map,
+// 			width, height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 	// Write result image to file
+// 	write_device_texture_to_file((output_name + "_relaxed_cone_map_baseline.png").c_str(), cone_map);
+//
+// /* Non maximum suppression */
+//
+// /* Relaxed cone map generation: Analytic */
+// 	// Launch kernel
+// 	create_cone_map_analytic<<<blocks, threads>>>(*input_image, *fod_image, *fod_discrete_dirs, *suppressed,
+// 																								*cone_map, width, height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 	// Write result image to file
+// 	write_device_texture_to_file((output_name + "_relaxed_cone_map_analytic.png").c_str(), cone_map);
 
 /* Directional local maxima */
 	// Allocate device memory
@@ -124,65 +209,78 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	// 															 *dir_bit_image, width, height, 1);
 	// }
 
-	// Any of the 8
 	bits_to_image<<<blocks, threads>>>(*local_max_8dirs, *dir_bit_image,
-																		width, height, 0b11111111);
+																		width, height, 1);
 	CUDA_CHECK(cudaDeviceSynchronize());
-	write_device_texture_to_file((output_name + "_local_max_8dirs.png").c_str(), dir_bit_image);
 
-	// Any of the 4 axis aligned dirs
-	bits_to_image<<<blocks, threads>>>(*local_max_8dirs, *dir_bit_image,
-																		width, height, 0b01010101);
-	CUDA_CHECK(cudaDeviceSynchronize());
-	write_device_texture_to_file((output_name + "_local_max_4dirs.png").c_str(), dir_bit_image);
+	// write_device_texture_to_file((output_name + "_local_max_dir1.png").c_str(), dir_bit_image);
 
+	std::vector<std::vector<SurfacePoint>> paths;
+	TextureHostPointer<unsigned char> h_heightmap{input_image};
+	write_host_texture_to_file((output_name + "_heightmap.png").c_str(), h_heightmap);
+	TextureHostPointer<unsigned char> h_watershed1{dir_bit_image};
+	write_host_texture_to_file((output_name + "_local_max_dir1.png").c_str(), h_watershed1);
+	
+	find_climbing_paths(*h_heightmap, *h_watershed1, paths, width, height);
 
-// /* Create binary mipmaps */
-//	 int mipmap_width	= (width	+ 1) / 2;
-//	 int mipmap_height = (height + 1) / 2;
-//
-//	 unsigned char *d_binary_mipmap;
-//	 CUDA_CHECK(cudaMalloc(&d_binary_mipmap, mipmap_width * mipmap_height));
-//
-// 	create_binary_mipmap_level<<<blocks, threads>>>(d_binary_mipmap, *local_max_8dirs, width, height, mipmap_width, mipmap_height);
-// 	CUDA_CHECK(cudaDeviceSynchronize());
-//
-//	 CUDA_CHECK(cudaFree(d_dir_bit_image));
-//	 CUDA_CHECK(cudaMalloc(&d_dir_bit_image, mipmap_width * mipmap_height));
+	int sum = 0;
+	for (auto path : paths) {
+		sum += path.size();
+	}
+	std::cout << sum << '\n';
+	std::cout << paths.size() << '\n';
+
+	TextureHostPointer<unsigned char> h_paths{width, height, 3};
+
+	for (auto path : paths) {
+		uchar3 color;
+		color.x = rand() % 256;
+		color.y = rand() % 256;
+		color.z = rand() % 256;
+		for (SurfacePoint point : path) {
+			int idx = (point.v * width + point.u) * 3;
+			(*h_paths)[idx]		 = color.x;
+			(*h_paths)[idx + 1] = color.y;
+			(*h_paths)[idx + 2] = color.z;
+		}
+	}
+
+	write_host_texture_to_file((output_name + "dir1_climbing_paths.png").c_str(), h_paths);
+
 //
 // 	// Any of the 8
-// 	bits_to_image<<<blocks, threads>>>(d_binary_mipmap, *dir_bit_image,
-// 																		mipmap_width, mipmap_height, 0b11111111);
-//	 CUDA_CHECK(cudaDeviceSynchronize());
-// 	write_device_texture_to_file((output_name + "_local_max_8dirs_mipmap.png").c_str(),
-// 															 *dir_bit_image, mipmap_width, mipmap_height, 1);
+// 	bits_to_image<<<blocks, threads>>>(*local_max_8dirs, *dir_bit_image,
+// 																		width, height, 0b11111111);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+// 	write_device_texture_to_file((output_name + "_local_max_8dirs.png").c_str(), dir_bit_image);
 //
 // 	// Any of the 4 axis aligned dirs
-// 	bits_to_image<<<blocks, threads>>>(d_binary_mipmap, *dir_bit_image,
-// 																		mipmap_width, mipmap_height, 0b01010101);
-//	 CUDA_CHECK(cudaDeviceSynchronize());
-// 	write_device_texture_to_file((output_name + "_local_max_4dirs_mipmap.png").c_str(),
-// 															 *dir_bit_image, mipmap_width, mipmap_height, 1);
-
-/* Relaxed cone map generation: Discrete directions */
-	// Launch kernel
-	create_cone_map_8dir<<<blocks, threads>>>(*input_image, *fod_image,
-																						 *local_max_8dirs, *cone_map,
-																						 width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_relaxed_cone_map_8dirs.png").c_str(), cone_map);
-
-	// Launch kernel
-	create_cone_map_4dir<<<blocks, threads>>>(*input_image, *fod_image,
-																						 *local_max_8dirs, *cone_map,
-																						 width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_relaxed_cone_map_4dirs.png").c_str(), cone_map);
+// 	bits_to_image<<<blocks, threads>>>(*local_max_8dirs, *dir_bit_image,
+// 																		width, height, 0b01010101);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+// 	write_device_texture_to_file((output_name + "_local_max_4dirs.png").c_str(), dir_bit_image);
+//
+//
+// /* Relaxed cone map generation: Discrete directions */
+// 	// Launch kernel
+// 	create_cone_map_8dir<<<blocks, threads>>>(*input_image, *fod_image,
+// 																						 *local_max_8dirs, *cone_map,
+// 																						 width, height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 	// Write result image to file
+// 	write_device_texture_to_file((output_name + "_relaxed_cone_map_8dirs.png").c_str(), cone_map);
+//
+// 	// Launch kernel
+// 	create_cone_map_4dir<<<blocks, threads>>>(*input_image, *fod_image,
+// 																						 *local_max_8dirs, *cone_map,
+// 																						 width, height);
+// 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 	// Write result image to file
+// 	write_device_texture_to_file((output_name + "_relaxed_cone_map_4dirs.png").c_str(), cone_map);
 }
+
 
 int main(int argc, char* argv[]) {
 	std::vector<std::string> heightmap_files;

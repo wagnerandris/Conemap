@@ -18,6 +18,7 @@ __global__ void invert(unsigned char* data, int width, int height);
 
 __global__ void bits_to_image(unsigned char* data, unsigned char* output_image, int width, int height, unsigned char bitmask);
 
+__global__ void mask(unsigned char* data, unsigned char* mask, unsigned char* output, int width, int height);
 
 /* Derivatives */
 __global__ void fod(unsigned char* heightmap, int* fod, unsigned char* fod_image, float* exact_dirs, unsigned char* discrete_dirs, unsigned char* dirs_image, int width, int height);

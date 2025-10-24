@@ -124,28 +124,52 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	local_max_8dir<<<blocks, threads>>>(*input_image, *local_max_8dirs,
 																			 width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
+//
+// /* Binary mipmaps */
+// 	MipmapDevicePointer<unsigned char> local_max_8dirs_mipmaps(local_max_8dirs, &create_binary_mipmap_level);
+//
+// 	// For all mipmap levels
+// 	for (size_t l = 0; l < local_max_8dirs_mipmaps.mipmap_levels.size(); ++l) {
+// 		TextureDevicePointer<unsigned char>* level = local_max_8dirs_mipmaps.mipmap_levels[l];
+// 		TextureDevicePointer<unsigned char> level_image{level->width, level->height, level->channels};
+//
+// 		// Save local maxima in each direction to separate images
+// 		for (int i = 0; i < 8; ++i) {
+// 			// Create image
+// 			bits_to_image<<<blocks, threads>>>(**level, *level_image,
+// 																				level->width, level->height, 1 << i);
+// 			CUDA_CHECK(cudaDeviceSynchronize());
+//
+// 			// Save
+// 			write_device_texture_to_file((output_name + "_local_max_dir" + std::to_string(i) + "_mip_level" + std::to_string(l) + ".png").c_str(), level_image);
+// 		}
+// 	}
 
-/* Binary mipmaps */
-	MipmapDevicePointer<unsigned char> local_max_8dirs_mipmaps(local_max_8dirs, &create_binary_mipmap_level);
+	mask<<<blocks, threads>>>(*input_image, *local_max_8dirs, *dir_bit_image, width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+	MipmapDevicePointer<unsigned char> local_max_height_mipmaps(dir_bit_image, &create_max_mipmap_level);
 
 	// For all mipmap levels
-	for (size_t l = 0; l < local_max_8dirs_mipmaps.mipmap_levels.size(); ++l) {
-		TextureDevicePointer<unsigned char>* level = local_max_8dirs_mipmaps.mipmap_levels[l];
-		TextureDevicePointer<unsigned char> level_image{level->width, level->height, level->channels};
-
-		// Save local maxima in each direction to separate images
-		for (int i = 0; i < 8; ++i) {
-			// Create image
-			bits_to_image<<<blocks, threads>>>(**level, *level_image,
-																				level->width, level->height, 1 << i);
-			CUDA_CHECK(cudaDeviceSynchronize());
-
-			// Save
-			write_device_texture_to_file((output_name + "_local_max_dir" + std::to_string(i) + "_mip_level" + std::to_string(l) + ".png").c_str(), level_image);
-		}
+	for (size_t l = 0; l < local_max_height_mipmaps.mipmap_levels.size(); ++l) {
+		// Save
+		write_device_texture_to_file((output_name + "_local_max_height_mip_level" + std::to_string(l) + ".png").c_str(), *local_max_height_mipmaps.mipmap_levels[l]);
 	}
 
-	exit(0);
+	// For dir 0
+	TextureDevicePointer<unsigned char> dir0{width, height, 1};
+
+	bits_to_image<<<blocks, threads>>>(*local_max_8dirs, *dir0, width, height, 0b00000001);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	mask<<<blocks, threads>>>(*input_image, *dir0, *dir_bit_image, width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+	MipmapDevicePointer<unsigned char> local_max_height_mipmaps_dir0(dir_bit_image, &create_max_mipmap_level);
+
+	// For all mipmap levels
+	for (size_t l = 0; l < local_max_height_mipmaps_dir0.mipmap_levels.size(); ++l) {
+		// Save
+		write_device_texture_to_file((output_name + "_local_max_height_dir0_mip_level" + std::to_string(l) + ".png").c_str(), *local_max_height_mipmaps_dir0.mipmap_levels[l]);
+	}
 
 	// // Any of the 8
 	// bits_to_image<<<blocks, threads>>>(*local_max_8dirs, *dir_bit_image,

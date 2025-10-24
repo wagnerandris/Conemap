@@ -22,6 +22,16 @@ __global__ void bits_to_image(unsigned char* data, unsigned char* output_image, 
 	output_image[v * width + u] = data[v * width + u] & bitmask ? 255 : 0;
 }
 
+__global__ void mask(unsigned char* data, unsigned char* mask, unsigned char* output, int width, int height) {
+	int u = blockIdx.x * blockDim.x + threadIdx.x;
+	int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (u >= width || v >= height) return;
+
+	int idx = v * width + u;
+
+	output[idx] = mask[idx] ? data[idx] : 0;
+}
 
 /* Derivatives */
 

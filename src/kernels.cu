@@ -67,12 +67,12 @@ __global__ void fod(unsigned char* heightmap, int* fods, unsigned char* fod_imag
 
 	exact_dirs[idx] = dir;
 
-	discrete_dirs[idx] = discrete_dir;
+	discrete_dirs[idx] = 1 << discrete_dir;
 
 	dirs_image[idx] = discrete_dirs[idx] * 32 + 127;
 }
 
-__global__ void sod_and_watershed(int* fod, unsigned char* sod_image, unsigned char* watershed_image, int width, int height) {
+__global__ void sod_and_watershed(int* fod, unsigned char* fod_discrete_dirs, unsigned char* sod_image, unsigned char* watershed_image, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -107,13 +107,13 @@ __global__ void sod_and_watershed(int* fod, unsigned char* sod_image, unsigned c
 	
 	int val = hhsum * fod[idx * 2 + 1] * fod[idx * 2 + 1] - (hvsum + vhsum) * fod[idx * 2 + 0] * fod[idx * 2 + 1] + vvsum * fod[idx * 2 + 0] * fod[idx * 2 + 0];
 
-	watershed_image[idx] = val < 0 ? 255 : 0;
+	watershed_image[idx] = val < 0 ? fod_discrete_dirs[idx] : 0;
 }
 
 
 /* Local maxima */
 
-__global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char* dirs, unsigned char* watershed_image, unsigned char* suppressed_image, int width, int height) {
+__global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char* watershed_image, unsigned char* suppressed_image, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -124,28 +124,28 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char*
 	int du;
 	int dv;
 
-	switch (dirs[idx]) {
+	switch (watershed_image[idx]) {
 		case 0:
+			suppressed_image[idx] = 0;
+			return;
+		case 1 << 0:
 			du = 0;
 			dv = 1;
 			break;
-		case 1:
+		case 1 << 1:
 			du = -1;
 			dv = 1;
 			break;
-		case 2:
+		case 1 << 2:
 			du = 1;
 			dv = 0;
 			break;
-		case 3:
+		case 1 << 3:
 			du = 1;
 			dv = 1;
 			break;
 	}
 
-	if (watershed_image[idx] == 0) {
-		suppressed_image[idx] = 0;
-	} else
 	if (u + du >= 0 && u + du < width &&
 			v + dv >= 0 && v + dv < height &&
 			heightmap[((v + dv) * width + u + du)] > heightmap[idx]) {
@@ -156,7 +156,7 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char*
 			heightmap[((v - dv) * width + u - du)] > heightmap[idx]) {
 			suppressed_image[idx] = 0;
 	} else {
-		suppressed_image[idx] = 255;
+		suppressed_image[idx] = watershed_image[idx];
 	}
 }
 
@@ -392,7 +392,7 @@ __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char
 	cone_map[idx * 4 + 3] = fod_image[idx * 3 + 1];
 }
 
-__global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char* fod_image, unsigned char* dirs, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height) {
+__global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char* fod_image, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -443,7 +443,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed_image[dv * width + du] || dirs[dv * width + du] == 0 || dirs[dv * width + du] == 2) continue;
+			if (!(suppressed_image[dv * width + du] & 0b00001110)) continue;
 
 			// normalize v displacement
 			dvn = (dv - v) * iheight;
@@ -477,7 +477,8 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int du = start; du < end; ++du) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed_image[dv * width + du] || dirs[dv * width + du] == 1 || dirs[dv * width + du] == 3) continue;
+			if (!(suppressed_image[dv * width + du] & 0b00001011)) continue;
+			if (!(suppressed_image[dv * width + du] & (1 << 0))) continue;
 
 			// normalize v displacement
 			dun = (du - u) * iwidth;
@@ -511,7 +512,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed_image[dv * width + du] || dirs[dv * width + du] == 0 || dirs[dv * width + du] == 2) continue;
+			if (!(suppressed_image[dv * width + du] & 0b00001110)) continue;
 
 			// normalize v displacement
 			dvn = (dv - v) * iheight;
@@ -546,7 +547,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int du = start; du < end; ++du) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed_image[dv * width + du] || dirs[dv * width + du] == 1 || dirs[dv * width + du] == 3) continue;
+			if (!(suppressed_image[dv * width + du] & 0b00001011)) continue;
 
 			// normalize v displacement
 			dun = (du - u) * iwidth;

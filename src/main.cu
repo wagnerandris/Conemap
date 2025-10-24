@@ -57,29 +57,38 @@ void convert_image(const char *filepath, bool depthmap = false) {
 	// Allocate device memory
 	TextureDevicePointer<unsigned char>
 		sod_image{width, height, 4},
-		watershed{width, height, 1};
+		watershed{width, height, 1},
+		dir_bit_image{width, height, 1};
 
 	// Launch kernel
-	sod_and_watershed<<<blocks, threads>>>(*fods, *sod_image, *watershed,
+	sod_and_watershed<<<blocks, threads>>>(*fods, *fod_discrete_dirs, *sod_image, *watershed,
 																				 width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 	// Write result image to file
 	write_device_texture_to_file((output_name + "_sod.png").c_str(), sod_image);
-	write_device_texture_to_file((output_name + "_watershed.png").c_str(), watershed);
+
+	// Write watersheds in any direction to a file
+	bits_to_image<<<blocks, threads>>>(*watershed, *dir_bit_image,
+																		width, height, 0b11111111);
+	CUDA_CHECK(cudaDeviceSynchronize());
+	write_device_texture_to_file((output_name + "_watershed.png").c_str(), dir_bit_image);
 
 /* Non maximum suppression */
 	// Allocate device memory
 	TextureDevicePointer<unsigned char> suppressed{width, height, 1};
 
 	// Launch kernel
-	non_maximum_suppression<<<blocks, threads>>>(*input_image, *fod_discrete_dirs,
+	non_maximum_suppression<<<blocks, threads>>>(*input_image,
 																							 *watershed, *suppressed,
 																							 width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
-	// Write result image to file
-	write_device_texture_to_file((output_name + "_suppressed.png").c_str(), suppressed);
+	// Write suppressed in any direction to a file
+	bits_to_image<<<blocks, threads>>>(*suppressed, *dir_bit_image,
+																		width, height, 0b11111111);
+	CUDA_CHECK(cudaDeviceSynchronize());
+	write_device_texture_to_file((output_name + "_suppressed.png").c_str(), dir_bit_image);
 
 /* Relaxed cone map generation: Baseline */
 	// Allocate device memory
@@ -97,7 +106,7 @@ void convert_image(const char *filepath, bool depthmap = false) {
 
 /* Relaxed cone map generation: Analytic */
 	// Launch kernel
-	create_cone_map_analytic<<<blocks, threads>>>(*input_image, *fod_image, *fod_discrete_dirs, *suppressed,
+	create_cone_map_analytic<<<blocks, threads>>>(*input_image, *fod_image, *suppressed,
 																								*cone_map, width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -107,8 +116,7 @@ void convert_image(const char *filepath, bool depthmap = false) {
 /* Directional local maxima */
 	// Allocate device memory
 	TextureDevicePointer<unsigned char>
-		local_max_8dirs{width, height, 1},
-		dir_bit_image{width, height, 1};
+		local_max_8dirs{width, height, 1};
 
 	// Launch kernel
 	local_max_8dir<<<blocks, threads>>>(*input_image, *local_max_8dirs,

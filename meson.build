@@ -8,7 +8,8 @@ add_project_arguments(
 )
 
 executable('Conemap',
-           'src/main.cu',
+           'src/main.cpp',
+           'src/conemap.cu',
            'src/kernels.cu',
            dependencies : [boost_dep],
            install : true)

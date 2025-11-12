@@ -1,8 +1,5 @@
 #pragma once
 
-#include "Texture.cuh"
-
-// TODO is Sobel better than Prewitt?
 __device__ __constant__ float vkernel[9] = {
  -1,-2,-1,
 	0, 0, 0,
@@ -22,21 +19,18 @@ __global__ void bits_to_image(unsigned char* data, unsigned char* output_image, 
 
 
 /* Derivatives */
-__global__ void fod(unsigned char* heightmap, int* fod, unsigned char* fod_image, float* exact_dirs, unsigned char* discrete_dirs, unsigned char* dirs_image, int width, int height);
+__global__ void fod(unsigned char* heightmap, int* fods, float* fod_dirs, int width, int height);
 
-__global__ void sod_and_watershed(int* fod, unsigned char* fod_discrete_dirs, unsigned char* sod_image, unsigned char* watershed_image, int width, int height);
+__global__ void watershed(int* fods, bool* watersheds, int width, int height);
+
 
 /* Local maxima */
-__global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char* watershed_image, unsigned char* suppressed_image, int width, int height);
+__global__ void non_maximum_suppression(unsigned char* heightmap, float* fod_dirs, bool* watershed, bool* suppressed, int width, int height);
 
 __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, int width, int height);
 
-// TODO template function???
+
 /* Cone maps */
-__global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char* fod_image, float* gradient_dirs, unsigned char* watershed, unsigned char* cone_map, int width, int height);
+__global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppressed, float* fod_dirs, int* fods, unsigned char* cone_map, int width, int height);
 
-__global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char* fod_image, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height);
-
-__global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
-
-__global__ void create_cone_map_4dir(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
+__global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);

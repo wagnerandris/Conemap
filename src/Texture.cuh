@@ -33,7 +33,7 @@ struct TextureDevicePointer {
 		CUDA_CHECK(cudaMalloc(&device_pointer, size));
 		CUDA_CHECK(cudaMemcpy(device_pointer, data, size, cudaMemcpyHostToDevice));
 	}
-	
+
 	TextureDevicePointer(TextureDevicePointer&& other) noexcept // move constructor
 		: width(other.width), height(other.height), channels(other.channels), device_pointer(std::exchange(other.device_pointer, nullptr)) {}
 

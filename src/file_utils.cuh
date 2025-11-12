@@ -1,7 +1,6 @@
 #pragma once
 
 // STD
-#include <stdexcept>
 #include <stdio.h>
 
 // STB
@@ -78,6 +77,6 @@ inline bool write_device_texture_to_file(const char* filepath, TextureDevicePoin
 		return false;
 	};
 	delete[] h_data;
-	printf("Written image as %s\n", filepath);
+	printf("Written texture as %s\n", filepath);
 	return true;
 }

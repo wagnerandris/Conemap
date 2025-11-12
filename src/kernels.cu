@@ -25,63 +25,40 @@ __global__ void bits_to_image(unsigned char* data, unsigned char* output_image, 
 
 /* Derivatives */
 
-__global__ void fod(unsigned char* heightmap, int* fods, unsigned char* fod_image, float* exact_dirs, unsigned char* discrete_dirs, unsigned char* dirs_image, int width, int height) {
-	int u = blockIdx.x * blockDim.x + threadIdx.x;
-	int v = blockIdx.y * blockDim.y + threadIdx.y;
-
-	 if (u >= width || v >= height) return;
-
-	 // Possible optimizations:
-	 //	- For every pixel, compute the sum with the side adjacent ones in both dimensions and save to shared memory
-	//	- Step by channels instead of 1 in the loop (only worth it, if kernel lookup is independent)
-	//	- Previtt operator instead of Sobel -> no kernel needed multiply by value/sign of index
-	int hsum = 0;
-	int vsum = 0;
-	for (int dv = 0; dv < 3; ++dv) {
-		for (int du = 0; du < 3; ++du) {
-			 int cu = min(max(u + du - 1, 0), width - 1);
-			 int cv = min(max(v + dv - 1, 0), height - 1);
-			 int cidx = (cv * width + cu);
-			hsum += heightmap[cidx] * hkernel[dv * 3 + du];
-			vsum += heightmap[cidx] * vkernel[dv * 3 + du];
-		}
-	}
-
-	// int grad[2] = {hsum, vsum};
-	// int scale = std::sqrt(vsum * vsum + hsum * hsum);
-	float dir = atan2f(vsum, hsum);
-	unsigned char discrete_dir = static_cast<unsigned char>(
-																(dir + M_PI // all positive
-																+ M_PI_4f / 2.0f) // align regions
-																/ M_PI_4f // 8 dirs
-																) % 4; // the 4 we care about;
-
-	int idx = v * width + u;
-
-	fod_image[idx * 3 + 0] = (hsum + 1020) >> 3;
-	fod_image[idx * 3 + 1] = (vsum + 1020) >> 3;
-	fod_image[idx * 3 + 2] = 127;
-
-	fods[idx * 2 + 0] = hsum;
-	fods[idx * 2 + 1] = vsum;
-
-	exact_dirs[idx] = dir;
-
-	discrete_dirs[idx] = 1 << discrete_dir;
-
-	dirs_image[idx] = discrete_dirs[idx] * 32 + 127;
-}
-
-__global__ void sod_and_watershed(int* fod, unsigned char* fod_discrete_dirs, unsigned char* sod_image, unsigned char* watershed_image, int width, int height) {
+__global__ void fod(unsigned char* heightmap, int* fods, float* fod_dirs, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
 	if (u >= width || v >= height) return;
 	
-	// Possible optimizations:
-	//	- For every pixel, compute the sum with the side adjacent ones in both dimensions and save to shared memory
-	//	- Step by channels instead of 1 in the loop (only worth it, if kernel lookup is independent)
-	//	- Previtt operator instead of Sobel -> no kernel needed multiply by value/sign of index
+	int idx = v * width + u;
+
+	int hsum = 0;
+	int vsum = 0;
+	for (int dv = 0; dv < 3; ++dv) {
+		for (int du = 0; du < 3; ++du) {
+			int cu = min(max(u + du - 1, 0), width - 1);
+			int cv = min(max(v + dv - 1, 0), height - 1);
+			int cidx = (cv * width + cu);
+			hsum += heightmap[cidx] * hkernel[dv * 3 + du];
+			vsum += heightmap[cidx] * vkernel[dv * 3 + du];
+		}
+	}
+
+	fod_dirs[idx] = atan2f(vsum, hsum);
+
+	fods[idx * 2 + 0] = hsum;
+	fods[idx * 2 + 1] = vsum;
+}
+
+
+__global__ void watershed(int* fods, bool* watersheds, int width, int height) {
+	int u = blockIdx.x * blockDim.x + threadIdx.x;
+	int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (u >= width || v >= height) return;
+	
+	// Second order derivative
 	int hhsum = 0;
 	int vhsum = 0;
 	int hvsum = 0;
@@ -91,29 +68,26 @@ __global__ void sod_and_watershed(int* fod, unsigned char* fod_discrete_dirs, un
 			int cu = min(max(u + du - 1, 0), width - 1);
 			int cv = min(max(v + dv - 1, 0), height - 1);
 			int cidx = (cv * width + cu) * 2;
-			hhsum += fod[cidx + 0] * hkernel[dv * 3 + du];
-			hvsum += fod[cidx + 1] * hkernel[dv * 3 + du];
-			vhsum += fod[cidx + 0] * vkernel[dv * 3 + du];
-			vvsum += fod[cidx + 1] * vkernel[dv * 3 + du];
+			hhsum += fods[cidx + 0] * hkernel[dv * 3 + du];
+			hvsum += fods[cidx + 1] * hkernel[dv * 3 + du];
+			vhsum += fods[cidx + 0] * vkernel[dv * 3 + du];
+			vvsum += fods[cidx + 1] * vkernel[dv * 3 + du];
 		}
 	}
 
 	int idx = v * width + u;
-
-	sod_image[idx * 4 + 0] = (hhsum + 1020) >> 3;
-	sod_image[idx * 4 + 1] = (hvsum + 1020) >> 3;
-	sod_image[idx * 4 + 2] = (vhsum + 1020) >> 3;
-	sod_image[idx * 4 + 3] = (vvsum + 1020) >> 3;
 	
-	int val = hhsum * fod[idx * 2 + 1] * fod[idx * 2 + 1] - (hvsum + vhsum) * fod[idx * 2 + 0] * fod[idx * 2 + 1] + vvsum * fod[idx * 2 + 0] * fod[idx * 2 + 0];
-
-	watershed_image[idx] = val < 0 ? fod_discrete_dirs[idx] : 0;
+	watersheds[idx] =
+		hhsum * fods[idx * 2 + 1] * fods[idx * 2 + 1] -
+		(hvsum + vhsum) * fods[idx * 2 + 0] * fods[idx * 2 + 1] +
+		vvsum * fods[idx * 2 + 0] * fods[idx * 2 + 0]
+		< 0;
 }
 
 
 /* Local maxima */
 
-__global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char* watershed_image, unsigned char* suppressed_image, int width, int height) {
+__global__ void non_maximum_suppression(unsigned char* heightmap, float* fod_dirs, bool* watershed, bool* suppressed, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -124,39 +98,50 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, unsigned char*
 	int du;
 	int dv;
 
-	switch (watershed_image[idx]) {
+	if (!watershed[idx]) {
+		suppressed[idx] = 0;
+		return;
+	}
+
+	// get the nearest of the directions of neighbouring texels to the gradient direction
+	unsigned char discrete_dir = static_cast<unsigned char>(
+																(fod_dirs[idx] + M_PI // all positive
+																+ M_PI_4f / 2.0f) // align regions
+																/ M_PI_4f // 8 dirs
+																) % 4; // the 4 we care about;
+
+	// check in the direction orthogonal to the gradient
+	switch (discrete_dir) {
 		case 0:
-			suppressed_image[idx] = 0;
-			return;
-		case 1 << 0:
 			du = 0;
 			dv = 1;
 			break;
-		case 1 << 1:
+		case 1:
 			du = -1;
 			dv = 1;
 			break;
-		case 1 << 2:
+		case 2:
 			du = 1;
 			dv = 0;
 			break;
-		case 1 << 3:
+		case 3:
 			du = 1;
 			dv = 1;
 			break;
 	}
 
+	// if one of the neighbours has greater height, suppress the current texel
 	if (u + du >= 0 && u + du < width &&
 			v + dv >= 0 && v + dv < height &&
 			heightmap[((v + dv) * width + u + du)] > heightmap[idx]) {
-			suppressed_image[idx] = 0;
+			suppressed[idx] = 0;
 	} else
 	if (u - du >= 0 && u - du < width &&
 			v - dv >= 0 && v - dv < height &&
 			heightmap[((v - dv) * width + u - du)] > heightmap[idx]) {
-			suppressed_image[idx] = 0;
+			suppressed[idx] = 0;
 	} else {
-		suppressed_image[idx] = watershed_image[idx];
+		suppressed[idx] = watershed[idx];
 	}
 }
 
@@ -201,7 +186,7 @@ __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_ma
 
 /* Cone maps */
 
-__global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char* fod_image, float* gradient_dirs, unsigned char* watershed, unsigned char* cone_map, int width, int height) {
+__global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppressed, float* fod_dirs, int* fods, unsigned char* cone_map, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -252,8 +237,8 @@ __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
 			// check if (suppressed) watershed point, skip if not
-			if (!watershed[dv * width + du] ||
-					abs(remainderf((gradient_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[dv * width + du] ||
+					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
 
 			// normalize v displacement
@@ -288,8 +273,8 @@ __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int du = start; du < end; ++du) {
 			// check if (suppressed) watershed point, skip if not
-			if (!watershed[dv * width + du] ||
-					abs(remainderf((gradient_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[dv * width + du] ||
+					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
 
 			// normalize v displacement
@@ -324,8 +309,8 @@ __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
 			// check if (suppressed) watershed point, skip if not
-			if (!watershed[dv * width + du] ||
-					abs(remainderf((gradient_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[dv * width + du] ||
+					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
 
 			// normalize v displacement
@@ -361,8 +346,8 @@ __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char
 		// go through side
 		for (int du = start; du < end; ++du) {
 			// check if (suppressed) watershed point, skip if not
-			if (!watershed[dv * width + du] ||
-					abs(remainderf((gradient_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[dv * width + du] ||
+					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
 
 			// normalize v displacement
@@ -388,200 +373,34 @@ __global__ void create_cone_map_baseline(unsigned char* heightmap, unsigned char
 	ratio = sqrt(ratio);
 	cone_map[idx * 4 + 0] = heightmap[idx];
 	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
-	cone_map[idx * 4 + 2] = fod_image[idx * 3];
-	cone_map[idx * 4 + 3] = fod_image[idx * 3 + 1];
+	cone_map[idx * 4 + 2] = (fods[idx * 2] + 1020) / 8;
+	cone_map[idx * 4 + 3] = (fods[idx * 2 + 1] + 1020) / 8;
 }
 
-__global__ void create_cone_map_analytic(unsigned char* heightmap, unsigned char* fod_image, unsigned char* suppressed_image, unsigned char* cone_map, int width, int height) {
+
+__global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
 	if (u >= width || v >= height) return;
 
-	int idx = v * width + u;
-
-	float iwidth = 1.0f / width;
-	float iheight = 1.0f / height;
-
-	// TODO Why are we assuming run/rise = 1, instead of infinity? Float textures?
-	float min_ratio2 = 1.0f;
-
-	// normalize height
-	float h = heightmap[idx] / 255.0f;
-
-	// init variables
-	int du, dv;
-	float dun, dvn;
-	int start, end;
-
-	// search in an increasing radius spiral around the texel
-	for (int rad = 1;
-			// TODO why the 1.1f?
-			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			rad * rad <= 1.1f * (1.0f - h) * width *
-									 1.1f * (1.0f - h) * height *
-									 min_ratio2 &&
-			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
-			rad <= 1.1f * (1.0f - h) * width &&
-			rad <= 1.1f * (1.0f - h) * height;
-			++rad) {
-
-		// Right side
-
-		// u displacement
-		du = u + rad;
-		// normalized
-		dun = rad * iwidth;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du >= width) du -= width; 
-		// set v limits
-		start = max(v - rad, 0);
-		end = min(v + rad - 1, height);
-
-		// go through side
-		for (int dv = start; dv < end; ++dv) {
-			// check if (suppressed) watershed point, skip if not
-			if (!(suppressed_image[dv * width + du] & 0b00001110)) continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
-
-		// Top side
-
-		// u displacement
-		dv = v - rad;
-		// normalized
-		dvn = -rad * iheight;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv < 0) dv += height; 
-		// set u limits
-		start = max(u - rad, 0);
-		end = min(u + rad - 1, width);
-
-		// go through side
-		for (int du = start; du < end; ++du) {
-			// check if (suppressed) watershed point, skip if not
-			if (!(suppressed_image[dv * width + du] & 0b00001011)) continue;
-			if (!(suppressed_image[dv * width + du] & (1 << 0))) continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
-
-		// Left side
-
-		// u displacement
-		du = u - rad;
-		// normalized
-		dun = -rad * iwidth;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du < 0) du += width; 
-		// set v limits
-		start = max(v - rad + 1, 0);
-		end = min(v + rad, height);
-
-		// go through side
-		for (int dv = start; dv < end; ++dv) {
-			// check if (suppressed) watershed point, skip if not
-			if (!(suppressed_image[dv * width + du] & 0b00001110)) continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
-
-
-		// Bottom side
-
-		// u displacement
-		dv = v + rad;
-		// normalized
-		dvn = rad * iheight;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv >= height) dv -= height; 
-		// set u limits
-		start = max(u - rad + 1, 0);
-		end = min(u + rad, width);
-
-		// go through side
-		for (int du = start; du < end; ++du) {
-			// check if (suppressed) watershed point, skip if not
-			if (!(suppressed_image[dv * width + du] & 0b00001011)) continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+/* First order derivative */
+	int hsum = 0;
+	int vsum = 0;
+	for (int dv = 0; dv < 3; ++dv) {
+		for (int du = 0; du < 3; ++du) {
+			 int cu = min(max(u + du - 1, 0), width - 1);
+			 int cv = min(max(v + dv - 1, 0), height - 1);
+			 int cidx = (cv * width + cu);
+			hsum += heightmap[cidx] * hkernel[dv * 3 + du];
+			vsum += heightmap[cidx] * vkernel[dv * 3 + du];
 		}
 	}
 
-	float ratio = sqrt(min_ratio2);
-	// most of the data is on the low end...sqrting again spreads it better
-	// (plus multiply is a cheap operation in shaders!)
-	// -- Dummer
-	ratio = sqrt(ratio);
-	cone_map[idx * 4 + 0] = heightmap[idx];
-	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
-	cone_map[idx * 4 + 2] = fod_image[idx * 3];
-	cone_map[idx * 4 + 3] = fod_image[idx * 3 + 1];
-}
+	unsigned char dhdu = (hsum + 1020) / 8;
+  unsigned char dhdv = (vsum + 1020) / 8;
 
-__global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height) {
-	int u = blockIdx.x * blockDim.x + threadIdx.x;
-	int v = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (u >= width || v >= height) return;
-
+/*Cone ratios*/
 	int idx = v * width + u;
 
 	float iwidth = 1.0f / width;
@@ -799,380 +618,6 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* fo
 	ratio = sqrt(ratio);
 	cone_map[idx * 4 + 0] = heightmap[idx];
 	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
-	cone_map[idx * 4 + 2] = fod_image[idx * 3];
-	cone_map[idx * 4 + 3] = fod_image[idx * 3 + 1];
+	cone_map[idx * 4 + 2] = dhdu;
+	cone_map[idx * 4 + 3] = dhdv;
 }
-
-__global__ void create_cone_map_4dir(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height) {
-	int u = blockIdx.x * blockDim.x + threadIdx.x;
-	int v = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (u >= width || v >= height) return;
-	
-	int idx = v * width + u;
-
-	float iwidth = 1.0f / width;
-	float iheight = 1.0f / height;
-
-	// TODO Why are we assuming run/rise = 1 exactly (instead of infinity)? Float textures?
-	float min_ratio2 = 1.0f;
-
-	// normalize height
-	float h = heightmap[idx] / 255.0f;
-
-	// init variables
-	int du, dv;
-	float dun, dvn;
-	int start, end;
-
-	// search in an increasing radius spiral around the texel
-	for (int rad = 1;
-			// TODO why the 1.1f?
-			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			rad * rad <= 1.1f * (1.0f - h) * width *
-									 1.1f * (1.0f - h) * height *
-									 min_ratio2 &&
-			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
-			rad <= 1.1f * (1.0f - h) * width &&
-			rad <= 1.1f * (1.0f - h) * height;
-			++rad) {
-
-		// Right side
-
-		// u displacement
-		du = u + rad;
-		// normalized
-		dun = rad * iwidth;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du >= width) du -= width; 
-		// set v limits
-		start = max(v - rad, 0);
-		end = min(v + rad - 1, height);
-
-		// go through side
-		for (int dv = start; dv < end; ++dv) {
-			// check if local maxima in the given direction, skip if not
-
-			if (!(local_max_8dirs[dv * width + du] & 1 << 0)) continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
-
-		// Top side
-
-		// u displacement
-		dv = v - rad;
-		// normalized
-		dvn = -rad * iheight;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv < 0) dv += height; 
-		// set u limits
-		start = max(u - rad, 0);
-		end = min(u + rad - 1, width);
-
-		// go through side
-		for (int du = start; du < end; ++du) {
-			// check if local maxima in the given direction, skip if not
-
-			if (!(local_max_8dirs[dv * width + du] & 1 << 2)) continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
-
-		// Left side
-
-		// u displacement
-		du = u - rad;
-		// normalized
-		dun = -rad * iwidth;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du < 0) du += width; 
-		// set v limits
-		start = max(v - rad + 1, 0);
-		end = min(v + rad, height);
-
-		// go through side
-		for (int dv = start; dv < end; ++dv) {
-			// check if local maxima in the given direction, skip if not
-
-			if (!(local_max_8dirs[dv * width + du] & 1 << 4)) continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
-
-
-		// Bottom side
-
-		// u displacement
-		dv = v + rad;
-		// normalized
-		dvn = rad * iheight;
-
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv >= height) dv -= height; 
-		// set u limits
-		start = max(u - rad + 1, 0);
-		end = min(u + rad, width);
-
-		// go through side
-		for (int du = start; du < end; ++du) {
-			// check if local maxima in the given direction, skip if not
-
-			if (!(local_max_8dirs[dv * width + du] & 1 << 6)) continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
-		}
-	}
-
-	float ratio = sqrt(min_ratio2);
-	// most of the data is on the low end...sqrting again spreads it better
-	// (plus multiply is a cheap operation in shaders!)
-	// -- Dummer
-	ratio = sqrt(ratio);
-	cone_map[idx * 4 + 0] = heightmap[idx];
-	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
-	cone_map[idx * 4 + 2] = fod_image[idx * 3];
-	cone_map[idx * 4 + 3] = fod_image[idx * 3 + 1];
-}
-
-// __global__ void create_cone_map_4dirs_test(unsigned char* heightmap, unsigned char* fod_image, unsigned char* local_max_8dirs, TextureView<unsigned char> cone_map, int width, int height) {
-// 	int u = blockIdx.x * blockDim.x + threadIdx.x;
-// 	int v = blockIdx.y * blockDim.y + threadIdx.y;
-//
-// 	if (u >= width || v >= height) return;
-//
-// 	int idx = v * width + u;
-//
-// 	float iwidth = 1.0f / width;
-// 	float iheight = 1.0f / height;
-//
-// 	// TODO Why are we assuming run/rise = 1 exactly (instead of infinity)? Float textures?
-// 	float min_ratio2 = 1.0f;
-//
-// 	// normalize height
-// 	float h = heightmap[idx] / 255.0f;
-//
-// 	// init variables
-// 	int du, dv;
-// 	float dun, dvn;
-// 	int start, end;
-//
-// 	// search in an increasing radius spiral around the texel
-// 	for (int rad = 1;
-// 			// TODO why the 1.1f?
-// 			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-// 			rad * rad <= 1.1f * (1.0f - h) * width *
-// 									 1.1f * (1.0f - h) * height *
-// 									 min_ratio2 &&
-// 			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
-// 			rad <= 1.1f * (1.0f - h) * width &&
-// 			rad <= 1.1f * (1.0f - h) * height;
-// 			++rad) {
-//
-// 		// Right side
-//
-// 		// u displacement
-// 		du = u + rad;
-// 		// normalized
-// 		dun = rad * iwidth;
-//
-// 		// TODO only if tileable option is set
-// 		// loop around until reaching valid coordinates
-// 		while (du >= width) du -= width; 
-// 		// set v limits
-// 		start = max(v - rad, 0);
-// 		end = min(v + rad - 1, height);
-//
-// 		// go through side
-// 		for (int dv = start; dv < end; ++dv) {
-// 			// check if local maxima in the given direction, skip if not
-//
-// 			if (!(local_max_8dirs[dv * width + du] & 1 << 0)) continue;
-//
-// 			// normalize v displacement
-// 			dvn = (dv - v) * iheight;
-//
-// 			// distance squared
-// 			float d2 = dun * dun + dvn * dvn;
-//
-// 			// height difference
-// 			float dh = heightmap[dv * width + du] / 255.0 - h;
-//
-// 			// if more steep than previous best, override
-// 			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-// 				min_ratio2 = d2 / (dh * dh);
-// 			}
-// 		}
-//
-// 		// Top side
-//
-// 		// u displacement
-// 		dv = v - rad;
-// 		// normalized
-// 		dvn = -rad * iheight;
-//
-// 		// TODO only if tileable option is set
-// 		// loop around until reaching valid coordinates
-// 		while (dv < 0) dv += height; 
-// 		// set u limits
-// 		start = max(u - rad, 0);
-// 		end = min(u + rad - 1, width);
-//
-// 		// go through side
-// 		for (int du = start; du < end; ++du) {
-// 			// check if local maxima in the given direction, skip if not
-//
-// 			if (!(local_max_8dirs[dv * width + du] & 1 << 2)) continue;
-//
-// 			// normalize v displacement
-// 			dun = (du - u) * iwidth;
-//
-// 			// distance squared
-// 			float d2 = dun * dun + dvn * dvn;
-//
-// 			// height difference
-// 			float dh = heightmap[dv * width + du] / 255.0 - h;
-//
-// 			// if more steep than previous best, override
-// 			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-// 				min_ratio2 = d2 / (dh * dh);
-// 			}
-// 		}
-//
-// 		// Left side
-//
-// 		// u displacement
-// 		du = u - rad;
-// 		// normalized
-// 		dun = -rad * iwidth;
-//
-// 		// TODO only if tileable option is set
-// 		// loop around until reaching valid coordinates
-// 		while (du < 0) du += width; 
-// 		// set v limits
-// 		start = max(v - rad + 1, 0);
-// 		end = min(v + rad, height);
-//
-// 		// go through side
-// 		for (int dv = start; dv < end; ++dv) {
-// 			// check if local maxima in the given direction, skip if not
-//
-// 			if (!(local_max_8dirs[dv * width + du] & 1 << 4)) continue;
-//
-// 			// normalize v displacement
-// 			dvn = (dv - v) * iheight;
-//
-// 			// distance squared
-// 			float d2 = dun * dun + dvn * dvn;
-//
-// 			// height difference
-// 			float dh = heightmap[dv * width + du] / 255.0 - h;
-//
-// 			// if more steep than previous best, override
-// 			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-// 				min_ratio2 = d2 / (dh * dh);
-// 			}
-// 		}
-//
-//
-// 		// Bottom side
-//
-// 		// u displacement
-// 		dv = v + rad;
-// 		// normalized
-// 		dvn = rad * iheight;
-//
-// 		// TODO only if tileable option is set
-// 		// loop around until reaching valid coordinates
-// 		while (dv >= height) dv -= height; 
-// 		// set u limits
-// 		start = max(u - rad + 1, 0);
-// 		end = min(u + rad, width);
-//
-// 		// go through side
-// 		for (int du = start; du < end; ++du) {
-// 			// check if local maxima in the given direction, skip if not
-//
-// 			if (!(local_max_8dirs[dv * width + du] & 1 << 6)) continue;
-//
-// 			// normalize v displacement
-// 			dun = (du - u) * iwidth;
-//
-// 			// distance squared
-// 			float d2 = dun * dun + dvn * dvn;
-//
-// 			// height difference
-// 			float dh = heightmap[dv * width + du] / 255.0 - h;
-//
-// 			// if more steep than previous best, override
-// 			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-// 				min_ratio2 = d2 / (dh * dh);
-// 			}
-// 		}
-// 	}
-//
-// 	float ratio = sqrt(min_ratio2);
-// 	// most of the data is on the low end...sqrting again spreads it better
-// 	// (plus multiply is a cheap operation in shaders!)
-// 	// -- Dummer
-// 	ratio = sqrt(ratio);
-// 	cone_map[idx * 4 + 0] = heightmap[idx];
-// 	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
-// 	cone_map[idx * 4 + 2] = fod_image[idx * 3];
-// 	cone_map[idx * 4 + 3] = fod_image[idx * 3 + 1];
-// }

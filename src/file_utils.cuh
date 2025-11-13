@@ -4,15 +4,21 @@
 #include <stdio.h>
 
 // STB
+#ifndef STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
-#include <stb/stb_image.h>
+#endif
+#include "external/stb_image.h"
+
+#ifndef STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb/stb_image_write.h>
+#endif
+#include "external/stb_image_write.h"
 
 // CUDA
 #include <cuda_runtime.h>
 
 // CUDA error check macro
+#ifndef CUDA_CHECK
 #define CUDA_CHECK(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
 inline void gpuAssert(cudaError_t code, const char *file, int line)
@@ -23,6 +29,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line)
 		exit(code);
 	}
 }
+#endif
 
 #include "Texture.cuh"
 

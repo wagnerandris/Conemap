@@ -10,9 +10,25 @@ add_project_arguments(
   language: 'cuda'
 )
 
-executable('Conemap',
-           'src/main.cpp',
-           'src/conemap.cu',
-           'src/kernels.cu',
-           dependencies : [boost_dep],
-           install : true)
+conemap_lib = library(
+  'conemap',
+  'src/conemap.cu',
+  'src/kernels.cu',
+  dependencies : [boost_dep],
+)
+
+conemap_dep = declare_dependency(
+  link_with : conemap_lib,
+  include_directories: include_directories('src'),
+)
+
+# Build the standalone executable only when not a subproject
+if not meson.is_subproject()
+  executable(
+    'Conemap',
+    'src/main.cpp',
+    link_with : conemap_lib,
+    dependencies : [boost_dep],
+    install : true,
+  )
+endif

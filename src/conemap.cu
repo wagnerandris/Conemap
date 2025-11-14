@@ -5,7 +5,7 @@
 #include "Texture.cuh"
 
 
-void analytic(std::filesystem::path output_path, std::string filepath, bool depthmap) {
+void conemap::analytic(std::filesystem::path output_path, std::string filepath, bool depthmap) {
 
 	std::string output_name = depthmap ?
 		output_path / std::filesystem::path(filepath).stem().concat("_depthmap") :
@@ -66,7 +66,7 @@ void analytic(std::filesystem::path output_path, std::string filepath, bool dept
 }
 
 
-void discrete(std::filesystem::path output_path, std::filesystem::path filepath, bool depthmap) {
+void conemap::discrete(std::filesystem::path output_path, std::filesystem::path filepath, bool depthmap) {
 
 	std::string output_name = depthmap ?
 		output_path / filepath.stem().concat("_depthmap") :

@@ -63,8 +63,8 @@ int main(int argc, char* argv[]) {
 			std::cerr << "Error: " << file << " is not a file.\n";
 			continue;
 		}
-		analytic(output_path, file.c_str());
-		discrete(output_path, file);
+		conemap::analytic(output_path, file.c_str());
+		conemap::discrete(output_path, file);
 
 	}
 
@@ -74,8 +74,8 @@ int main(int argc, char* argv[]) {
 			std::cerr << "Error: " << file << " is not a file.\n";
 			continue;
 		}
-		analytic(output_path, file, true);
-		discrete(output_path, file, true);
+		conemap::analytic(output_path, file, true);
+		conemap::discrete(output_path, file, true);
 	}
 
 	return 0;

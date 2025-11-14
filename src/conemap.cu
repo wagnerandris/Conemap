@@ -3,9 +3,10 @@
 #include "file_utils.cuh"
 #include "kernels.cuh"
 #include "Texture.cuh"
+#include <filesystem>
 
 
-void conemap::analytic(std::filesystem::path output_path, std::string filepath, bool depthmap) {
+std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::string filepath, bool depthmap) {
 
 	std::string output_name = depthmap ?
 		output_path / std::filesystem::path(filepath).stem().concat("_depthmap") :
@@ -13,7 +14,7 @@ void conemap::analytic(std::filesystem::path output_path, std::string filepath, 
 
 /* Load image */
 	TextureDevicePointer<unsigned char> input_image = read_texture_to_device(filepath.c_str());
-	if (!input_image) return;
+	if (!input_image) return "";
 
 	int width = input_image.width;
 	int height = input_image.height;
@@ -26,6 +27,7 @@ void conemap::analytic(std::filesystem::path output_path, std::string filepath, 
 
 	if (depthmap) {
 		invert<<<blocks, threads>>>(*input_image, width, height);
+		CUDA_CHECK(cudaDeviceSynchronize());
 	}
 
 /* First order derivatives */
@@ -62,11 +64,14 @@ void conemap::analytic(std::filesystem::path output_path, std::string filepath, 
 	CUDA_CHECK(cudaDeviceSynchronize());
 	
 /* Write result image to file */
-	write_device_texture_to_file((output_name + "_relaxed_cone_map_analytic.png").c_str(), cone_map);
+	output_name += "_relaxed_cone_map_analytic.png";
+	write_device_texture_to_file(output_name.c_str(), cone_map);
+
+	return output_name;
 }
 
 
-void conemap::discrete(std::filesystem::path output_path, std::filesystem::path filepath, bool depthmap) {
+std::filesystem::path conemap::discrete(std::filesystem::path output_path, std::filesystem::path filepath, bool depthmap) {
 
 	std::string output_name = depthmap ?
 		output_path / filepath.stem().concat("_depthmap") :
@@ -74,7 +79,7 @@ void conemap::discrete(std::filesystem::path output_path, std::filesystem::path 
 
 /* Load image */
 	TextureDevicePointer<unsigned char> input_image = read_texture_to_device(filepath.c_str());
-	if (!input_image) return;
+	if (!input_image) return "";
 
 	int width = input_image.width;
 	int height = input_image.height;
@@ -87,6 +92,7 @@ void conemap::discrete(std::filesystem::path output_path, std::filesystem::path 
 
 	if (depthmap) {
 		invert<<<blocks, threads>>>(*input_image, width, height);
+		CUDA_CHECK(cudaDeviceSynchronize());
 	}
 
 /* Directional local maxima */
@@ -106,5 +112,8 @@ void conemap::discrete(std::filesystem::path output_path, std::filesystem::path 
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 /* Write result image to file */
-	write_device_texture_to_file((output_name + "_relaxed_cone_map_discrete.png").c_str(), cone_map);
+	output_name += "_relaxed_cone_map_discrete.png";
+	write_device_texture_to_file(output_name.c_str(), cone_map);
+
+	return output_name;
 }

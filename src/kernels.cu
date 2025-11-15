@@ -4,6 +4,10 @@
 
 /* Utils */
 
+__device__ int index(int width, int height, int u, int v) {
+	return (v % height) * width + (u % width);
+}
+
 __global__ void invert(unsigned char* data, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
@@ -37,11 +41,9 @@ __global__ void fod(unsigned char* heightmap, int* fods, float* fod_dirs, int wi
 	int vsum = 0;
 	for (int dv = 0; dv < 3; ++dv) {
 		for (int du = 0; du < 3; ++du) {
-			int cu = min(max(u + du - 1, 0), width - 1);
-			int cv = min(max(v + dv - 1, 0), height - 1);
-			int cidx = (cv * width + cu);
-			hsum += heightmap[cidx] * hkernel[dv * 3 + du];
-			vsum += heightmap[cidx] * vkernel[dv * 3 + du];
+			int didx = index(width, height, u + du - 1, v + dv - 1);
+			hsum += heightmap[didx] * hkernel[dv * 3 + du];
+			vsum += heightmap[didx] * vkernel[dv * 3 + du];
 		}
 	}
 
@@ -65,13 +67,11 @@ __global__ void watershed(int* fods, bool* watersheds, int width, int height) {
 	int vvsum = 0;
 	for (int dv = 0; dv < 3; ++dv) {
 		for (int du = 0; du < 3; ++du) {
-			int cu = min(max(u + du - 1, 0), width - 1);
-			int cv = min(max(v + dv - 1, 0), height - 1);
-			int cidx = (cv * width + cu) * 2;
-			hhsum += fods[cidx + 0] * hkernel[dv * 3 + du];
-			hvsum += fods[cidx + 1] * hkernel[dv * 3 + du];
-			vhsum += fods[cidx + 0] * vkernel[dv * 3 + du];
-			vvsum += fods[cidx + 1] * vkernel[dv * 3 + du];
+			int didx = index(width, height, u + du - 1, v + dv - 1) * 2;
+			hhsum += fods[didx + 0] * hkernel[dv * 3 + du];
+			hvsum += fods[didx + 1] * hkernel[dv * 3 + du];
+			vhsum += fods[didx + 0] * vkernel[dv * 3 + du];
+			vvsum += fods[didx + 1] * vkernel[dv * 3 + du];
 		}
 	}
 
@@ -131,15 +131,11 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, float* fod_dir
 	}
 
 	// if one of the neighbours has greater height, suppress the current texel
-	if (u + du >= 0 && u + du < width &&
-			v + dv >= 0 && v + dv < height &&
-			heightmap[((v + dv) * width + u + du)] > heightmap[idx]) {
-			suppressed[idx] = 0;
+	if (heightmap[index(width, height, u + du, v + dv)] > heightmap[idx]) {
+		suppressed[idx] = 0;
 	} else
-	if (u - du >= 0 && u - du < width &&
-			v - dv >= 0 && v - dv < height &&
-			heightmap[((v - dv) * width + u - du)] > heightmap[idx]) {
-			suppressed[idx] = 0;
+	if (heightmap[index(width, height, u - du, v - dv)] > heightmap[idx]) {
+		suppressed[idx] = 0;
 	} else {
 		suppressed[idx] = watershed[idx];
 	}
@@ -153,38 +149,44 @@ __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_ma
 
 	int h = heightmap[v * width + u];
 
-		// Direction vectors: Right, Top-Right, Top, Top-Left, Left, Bottom-Left, Bottom, Bottom-Right
-		int du[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
-		int dv[8] = { 0, -1, -1, -1, 0, 1, 1, 1 };
+	// Direction vectors: Right, Top-Right, Top, Top-Left, Left, Bottom-Left, Bottom, Bottom-Right
+	int du[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+	int dv[8] = { 0, -1, -1, -1, 0, 1, 1, 1 };
 
-		unsigned char result = 0;
+	unsigned char result = 0;
 
-		for (int dir = 0; dir < 8; ++dir) {
-				int un = u + du[dir];
-				int up = u - du[dir];
-				int vn = v + dv[dir];
-				int vp = v - dv[dir];
-
-				// Ensure both neighbors are within bounds
-				bool u_good = (un >= 0 && un < width && vn >= 0 && vn < height);
-				bool v_good = (up >= 0 && up < width && vp >= 0 && vp < height);
-
-				// edges are always max
-				// TODO looped textures?
-				int hn = u_good ? heightmap[vn * width + un] : -1;
-				int hp = v_good ? heightmap[vp * width + up] : -1;
-
-				// local max in hp to hn direction (if there is a plateau, we need its last point)
-				if (h > hn && h >= hp) {
-						result |= (1 << dir);
-				}
+	for (int dir = 0; dir < 8; ++dir) {
+		// local max given direction (if there is a plateau, we need its last point)
+		if (h > heightmap[index(width, height, u + du[dir], v + dv[dir])] &&
+				h >= heightmap[index(width, height, u - du[dir], v - dv[dir])]) {
+			result |= (1 << dir);
 		}
+	}
 
-		local_max_8dirs[v * width + u] = result;
+	local_max_8dirs[v * width + u] = result;
 }
 
 
 /* Cone maps */
+
+__device__ void check_texel(unsigned char* heightmap, int width, int height, int u, int v, int du, int dv, float iwidth, float iheight, float hn, float &min_ratio2) {
+	// normalize u displacement
+	float dun = (du - u) * iwidth;
+
+	// normalize v displacement
+	float dvn = (dv - v) * iheight;
+
+	// distance squared
+	float d2 = dun * dun + dvn * dvn;
+
+	// height difference
+	float dh = heightmap[index(width, height, du, dv)] / 255.0 - hn;
+
+	// if more steep than previous best, override
+	if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
+		min_ratio2 = d2 / (dh * dh);
+	}
+}
 
 __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppressed, float* fod_dirs, int* fods, unsigned char* cone_map, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
@@ -201,168 +203,94 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 	float min_ratio2 = 1.0f;
 
 	// normalize height
-	float h = heightmap[idx] / 255.0f;
+	float hn = heightmap[idx] / 255.0f;
 
 	// init variables
 	int du, dv;
-	float dun, dvn;
 	int start, end;
 
 	// search in an increasing radius spiral around the texel
 	for (int rad = 1;
 			// TODO why the 1.1f?
 			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			rad * rad <= 1.1f * (1.0f - h) * width *
-									 1.1f * (1.0f - h) * height *
+			rad * rad <= 1.1f * (1.0f - hn) * width *
+									 1.1f * (1.0f - hn) * height *
 									 min_ratio2 &&
 			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
-			rad <= 1.1f * (1.0f - h) * width &&
-			rad <= 1.1f * (1.0f - h) * height;
+			rad <= 1.1f * (1.0f - hn) * width &&
+			rad <= 1.1f * (1.0f - hn) * height;
 			++rad) {
 
 		// Right side
 
 		// u displacement
 		du = u + rad;
-		// normalized
-		dun = rad * iwidth;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du >= width) du -= width; 
 		// set v limits
-		start = max(v - rad, 0);
-		end = min(v + rad - 1, height);
+		start = v - rad;
+		end = v + rad - 1;
 
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed[dv * width + du] ||
-					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[index(width, height, du, dv)] ||
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
 
 		// Top side
 
 		// u displacement
 		dv = v - rad;
-		// normalized
-		dvn = -rad * iheight;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv < 0) dv += height; 
 		// set u limits
-		start = max(u - rad, 0);
-		end = min(u + rad - 1, width);
+		start = u - rad;
+		end = u + rad - 1;
 
 		// go through side
 		for (int du = start; du < end; ++du) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed[dv * width + du] ||
-					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[index(width, height, du, dv)] ||
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
 
 		// Left side
 
 		// u displacement
 		du = u - rad;
-		// normalized
-		dun = -rad * iwidth;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du < 0) du += width; 
 		// set v limits
-		start = max(v - rad + 1, 0);
-		end = min(v + rad, height);
+		start = v - rad + 1;
+		end = v + rad;
 
 		// go through side
 		for (int dv = start; dv < end; ++dv) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed[dv * width + du] ||
-					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[index(width, height, du, dv)] ||
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
-
 
 		// Bottom side
 
 		// u displacement
 		dv = v + rad;
-		// normalized
-		dvn = rad * iheight;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv >= height) dv -= height; 
 		// set u limits
-		start = max(u - rad + 1, 0);
-		end = min(u + rad, width);
+		start = u - rad + 1;
+		end = u + rad;
 
 		// go through side
 		for (int du = start; du < end; ++du) {
 			// check if (suppressed) watershed point, skip if not
-			if (!suppressed[dv * width + du] ||
-					abs(remainderf((fod_dirs[dv * width + du] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+			if (!suppressed[index(width, height, du, dv)] ||
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
 	}
 
@@ -410,204 +338,134 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 	float min_ratio2 = 1.0f;
 
 	// normalize height
-	float h = heightmap[idx] / 255.0f;
+	float hn = heightmap[idx] / 255.0f;
 
 	// init variables
 	int du, dv;
-	float dun, dvn;
 	int start, end;
 
 	// search in an increasing radius spiral around the texel
 	for (int rad = 1;
 			// TODO why the 1.1f?
 			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			rad * rad <= 1.1f * (1.0f - h) * width *
-									 1.1f * (1.0f - h) * height *
+			rad * rad <= 1.1f * (1.0f - hn) * width *
+									 1.1f * (1.0f - hn) * height *
 									 min_ratio2 &&
 			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
-			rad <= 1.1f * (1.0f - h) * width &&
-			rad <= 1.1f * (1.0f - h) * height;
+			rad <= 1.1f * (1.0f - hn) * width &&
+			rad <= 1.1f * (1.0f - hn) * height;
 			++rad) {
 
 		// Right side
 
 		// u displacement
 		du = u + rad;
-		// normalized
-		dun = rad * iwidth;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du >= width) du -= width; 
 		// set v limits
-		start = max(v - rad, 0);
-		end = min(v + rad - 1, height);
+		start = v - rad;
+		end = v + rad - 1;
 
 		// go through side
-		for (int dv = start; dv < end; ++dv) {
-			// check if local maxima in the given direction, skip if not
-
-			int discrete_dir;
-			if (dv - start <= rad / 2) discrete_dir = 1;
-			else if (end - dv <= rad / 2) discrete_dir = 7;
-			else discrete_dir = 0;
-
-			// float dir = atan2f(dv, du);
-			// unsigned char discrete_dir = static_cast<unsigned char>(
-			// 													(dir + M_PI // all positive
-			// 													+ M_PI_4f / 2.0f) // align regions
-			// 													/ M_PI_4f); // 8 dirs
+		// check if local maxima in the given direction
+		// skip if not
+		for (int dv = start; dv <= start + rad / 2; ++dv) {
+			int discrete_dir = 1;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
+		for (int dv = start + rad / 2 + 1; dv < end - rad / 2; ++dv) {
+			int discrete_dir = 0;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
+		for (int dv = end - rad / 2; dv < end; ++dv) {
+			int discrete_dir = 7;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
 
 		// Top side
 
 		// u displacement
 		dv = v - rad;
-		// normalized
-		dvn = -rad * iheight;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv < 0) dv += height; 
 		// set u limits
-		start = max(u - rad, 0);
-		end = min(u + rad - 1, width);
+		start = u - rad;
+		end = u + rad - 1;
 
 		// go through side
-		for (int du = start; du < end; ++du) {
-			// check if local maxima in the given direction, skip if not
-
-			int discrete_dir;
-			if (du - start <= rad / 2) discrete_dir = 3;
-			else if (end - du <= rad / 2) discrete_dir = 1;
-			else discrete_dir = 2;
-
-			// float dir = atan2f(dv, du);
-			// unsigned char discrete_dir = static_cast<unsigned char>(
-			// 													(dir + M_PI // all positive
-			// 													+ M_PI_4f / 2.0f) // align regions
-			// 													/ M_PI_4f); // 8 dirs
+		// check if local maxima in the given direction
+		// skip if not
+		for (int du = start; du <= start + rad / 2; ++du) {
+			int discrete_dir = 3;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
+		for (int du = start + rad / 2 + 1; du < end - rad / 2; ++du) {
+			int discrete_dir = 2;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
+		for (int du = end - rad / 2; du < end; ++du) {
+			int discrete_dir = 1;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
 
 		// Left side
 
 		// u displacement
 		du = u - rad;
-		// normalized
-		dun = -rad * iwidth;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (du < 0) du += width; 
 		// set v limits
-		start = max(v - rad + 1, 0);
-		end = min(v + rad, height);
+		start = v - rad + 1;
+		end = v + rad;
 
 		// go through side
-		for (int dv = start; dv < end; ++dv) {
-			// check if local maxima in the given direction, skip if not
-
-			int discrete_dir;
-			if (dv - start <= rad / 2) discrete_dir = 3;
-			else if (end - dv <= rad / 2) discrete_dir = 5;
-			else discrete_dir = 4;
-
-			// float dir = atan2f(dv, du);
-			// unsigned char discrete_dir = static_cast<unsigned char>(
-			// 													(dir + M_PI // all positive
-			// 													+ M_PI_4f / 2.0f) // align regions
-			// 													/ M_PI_4f); // 8 dirs
+		// check if local maxima in the given direction
+		// skip if not
+		for (int dv = start; dv <= start + rad / 2; ++dv) {
+			int discrete_dir = 3;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-
-			// normalize v displacement
-			dvn = (dv - v) * iheight;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
-
+		for (int dv = start + rad / 2 + 1; dv < end - rad / 2; ++dv) {
+			int discrete_dir = 4;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
+		for (int dv = end - rad / 2; dv < end; ++dv) {
+			int discrete_dir = 5;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
 
 		// Bottom side
 
 		// u displacement
 		dv = v + rad;
-		// normalized
-		dvn = rad * iheight;
 
-		// TODO only if tileable option is set
-		// loop around until reaching valid coordinates
-		while (dv >= height) dv -= height; 
 		// set u limits
-		start = max(u - rad + 1, 0);
-		end = min(u + rad, width);
+		start = u - rad + 1;
+		end = u + rad;
 
 		// go through side
-		for (int du = start; du < end; ++du) {
-			// check if local maxima in the given direction, skip if not
-
-			int discrete_dir;
-			if (du - start <= rad / 2) discrete_dir = 5;
-			else if (end - du <= rad / 2) discrete_dir = 7;
-			else discrete_dir = 6;
-
-			// float dir = atan2f(dv, du);
-			// unsigned char discrete_dir = static_cast<unsigned char>(
-			// 													(dir + M_PI // all positive
-			// 													+ M_PI_4f / 2.0f) // align regions
-			// 													/ M_PI_4f); // 8 dirs
+		// check if local maxima in the given direction
+		// skip if not
+		for (int du = start; du <= start + rad / 2; ++du) {
+			int discrete_dir = 5;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-
-			// normalize v displacement
-			dun = (du - u) * iwidth;
-
-			// distance squared
-			float d2 = dun * dun + dvn * dvn;
-
-			// height difference
-			float dh = heightmap[dv * width + du] / 255.0 - h;
-
-			// if more steep than previous best, override
-			if (dh > 0.0f && dh * dh * min_ratio2 > d2) {
-				min_ratio2 = d2 / (dh * dh);
-			}
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
+		for (int du = start + rad / 2 + 1; du < end - rad / 2; ++du) {
+			int discrete_dir = 6;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
+		}
+		for (int du = end - rad / 2; du < end; ++du) {
+			int discrete_dir = 7;
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
+			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, hn, min_ratio2);
 		}
 	}
 

@@ -33,26 +33,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line)
 
 #include "Texture.cuh"
 
-// TODO more sophisticated checks? (file exists etc)
-inline bool read_texture_to_device(unsigned char* &device_pointer, const char* filepath, int* width, int* height, int* channels) {
-	// load data
-	unsigned char* data = stbi_load(filepath, width, height, channels, 1);
-	if (!data) {
-		fprintf(stderr, "Could not load texture from %s.\n", filepath);
-		return false;
-	}
-
-	// copy to device
-	int size = (*width) * (*height);
-	CUDA_CHECK(cudaMalloc(&device_pointer, size));
-	CUDA_CHECK(cudaMemcpy(device_pointer, data, size, cudaMemcpyHostToDevice));
-	free(data);
-
-	printf("Loaded texture from %s.\nWidth: %d, Height: %d\n", filepath, *width, *height);
-	return true;
-}
-
-// TODO more sophisticated checks? (file exists etc)
 inline TextureDevicePointer<unsigned char> read_texture_to_device(const char* filepath) {
 	int width;
 	int height;
@@ -69,7 +49,6 @@ inline TextureDevicePointer<unsigned char> read_texture_to_device(const char* fi
 	return TextureDevicePointer<unsigned char>{width, height, 1, data};
 	free(data);
 }
-
 
 inline bool write_device_texture_to_file(const char* filepath, TextureDevicePointer<unsigned char> &tex) {
 	// copy to host

@@ -199,7 +199,6 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 	float iwidth = 1.0f / width;
 	float iheight = 1.0f / height;
 
-	// TODO Why are we assuming run/rise = 1, instead of infinity? Float textures?
 	float min_ratio2 = 1.0f;
 
 	// normalize height
@@ -211,14 +210,10 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 
 	// search in an increasing radius spiral around the texel
 	for (int rad = 1;
-			// TODO why the 1.1f?
 			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			rad * rad <= 1.1f * (1.0f - hn) * width *
-									 1.1f * (1.0f - hn) * height *
-									 min_ratio2 &&
-			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
-			rad <= 1.1f * (1.0f - hn) * width &&
-			rad <= 1.1f * (1.0f - hn) * height;
+			rad * rad <= (1.0f - hn) * width *
+									 (1.0f - hn) * height *
+									 min_ratio2;
 			++rad) {
 
 		// Right side
@@ -334,7 +329,6 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 	float iwidth = 1.0f / width;
 	float iheight = 1.0f / height;
 
-	// TODO Why are we assuming run/rise = 1 exactly (instead of infinity)? Float textures?
 	float min_ratio2 = 1.0f;
 
 	// normalize height
@@ -346,14 +340,10 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 
 	// search in an increasing radius spiral around the texel
 	for (int rad = 1;
-			// TODO why the 1.1f?
 			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			rad * rad <= 1.1f * (1.0f - hn) * width *
-									 1.1f * (1.0f - hn) * height *
-									 min_ratio2 &&
-			// because we started from 1, and further than (1.0f - h) * width, we couldn't find anything steeper than 1
-			rad <= 1.1f * (1.0f - hn) * width &&
-			rad <= 1.1f * (1.0f - hn) * height;
+			rad * rad <= (1.0f - hn) * width *
+									 (1.0f - hn) * height *
+									 min_ratio2;
 			++rad) {
 
 		// Right side

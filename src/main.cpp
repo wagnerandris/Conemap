@@ -1,4 +1,5 @@
 // STD
+#include <boost/program_options/value_semantic.hpp>
 #include <iostream>
 #include <filesystem>
 #include <string>
@@ -13,11 +14,13 @@ int main(int argc, char* argv[]) {
 	std::filesystem::path output_path;
 	std::vector<std::string> heightmap_files;
 	std::vector<std::string> depthmap_files;
+	bool analytic = false;
 
 	// Possible options
 	boost::program_options::options_description desc("Allowed options");
 	desc.add_options()
 		("help,h", "produce help message")
+		("analytic,a", boost::program_options::bool_switch(&analytic), "analytic generation mode")
 		("output,o", boost::program_options::value<std::filesystem::path>(&output_path)->default_value("."), "set path to output folder")
 		("heightmap", boost::program_options::value<std::vector<std::string>>(&heightmap_files), "input heightmap file")
 		("depthmap,d", boost::program_options::value<std::vector<std::string>>(&depthmap_files), "input depthmap file");
@@ -63,8 +66,8 @@ int main(int argc, char* argv[]) {
 			std::cerr << "Error: " << file << " is not a file.\n";
 			continue;
 		}
-		conemap::analytic(output_path, file.c_str());
-		conemap::discrete(output_path, file);
+		if (analytic) conemap::analytic(output_path, file);
+		else conemap::discrete(output_path, file);
 
 	}
 
@@ -74,8 +77,8 @@ int main(int argc, char* argv[]) {
 			std::cerr << "Error: " << file << " is not a file.\n";
 			continue;
 		}
-		conemap::analytic(output_path, file, true);
-		conemap::discrete(output_path, file, true);
+		if (analytic) conemap::analytic(output_path, file, true);
+		else conemap::discrete(output_path, file, true);
 	}
 
 	return 0;

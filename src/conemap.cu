@@ -1,9 +1,10 @@
-#include "conemap.hpp"
+// STD
+#include <filesystem>
 
+#include "conemap.hpp"
 #include "file_utils.cuh"
 #include "kernels.cuh"
 #include "Texture.cuh"
-#include <filesystem>
 
 
 std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::string filepath, bool depthmap) {

@@ -1,7 +1,5 @@
 project('Conemap', ['cpp', 'cuda'])
 
-boost_dep = dependency('boost', modules : ['program_options'], required : true)
-
 add_project_arguments(
   [
   '-diag-suppress=780',
@@ -14,7 +12,6 @@ conemap_lib = library(
   'conemap',
   'src/conemap.cu',
   'src/kernels.cu',
-  dependencies : [boost_dep],
 )
 
 conemap_dep = declare_dependency(
@@ -28,7 +25,6 @@ if not meson.is_subproject()
     'Conemap',
     'src/main.cpp',
     link_with : conemap_lib,
-    dependencies : [boost_dep],
     install : true,
   )
 endif

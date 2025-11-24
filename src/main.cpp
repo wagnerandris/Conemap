@@ -1,49 +1,70 @@
 // STD
-#include <boost/program_options/value_semantic.hpp>
+#include <getopt.h>
 #include <iostream>
 #include <filesystem>
-#include <string>
 #include <vector>
-
-// Boost
-#include <boost/program_options.hpp>
 
 #include "conemap.hpp"
 
 int main(int argc, char* argv[]) {
-	std::filesystem::path output_path;
-	std::vector<std::string> heightmap_files;
-	std::vector<std::string> depthmap_files;
+	std::filesystem::path output_path = ".";
+	std::vector<std::filesystem::path> heightmap_files;
+	std::vector<std::filesystem::path> depthmap_files;
 	bool analytic = false;
 
-	// Possible options
-	boost::program_options::options_description desc("Allowed options");
-	desc.add_options()
-		("help,h", "produce help message")
-		("analytic,a", boost::program_options::bool_switch(&analytic), "analytic generation mode")
-		("output,o", boost::program_options::value<std::filesystem::path>(&output_path)->default_value("."), "set path to output folder")
-		("heightmap", boost::program_options::value<std::vector<std::string>>(&heightmap_files), "input heightmap file")
-		("depthmap,d", boost::program_options::value<std::vector<std::string>>(&depthmap_files), "input depthmap file");
+   // Define long options
+	const struct option long_options[] = {
+		{"help",     no_argument,       nullptr, 'h'},
+		{"analytic", no_argument,       nullptr, 'a'},
+		{"output",   required_argument, nullptr, 'o'},
+		{"depthmap", required_argument, nullptr, 'd'},
+		{nullptr, 0, nullptr, 0}
+	};
 
-	// Positional options
-	boost::program_options::positional_options_description pod;
-	pod.add("heightmap", -1);	// all remaining options
+	int opt;
+	int option_index = 0;
 
-	boost::program_options::variables_map vm;
+	// Parse options
+	while ((opt = getopt_long(argc, argv, "hao:d:", long_options, &option_index)) != -1) {
+		switch (opt) {
+		case 'h':
+			std::cout << "Usage: " << argv[0] << " [-a] [-o OUTPUT] [-d DEPTH MAP...] HEIGHT MAP...\n"
+				"Options:\n"
+				"  -h, --help            \tproduce help message\n"
+				"  -a, --analytic        \tanalytic generation mode\n"
+				"  -o, --output PATH     \tpath to output folder (default: '.')\n"
+				"  -d, --depthmap FILE...\tinput depth map files\n"
+				"Positional arguments:\n"
+				"  FILE... \tinput height map files";
+			exit(0);
+			break;
 
-	try {
-		boost::program_options::store(boost::program_options::command_line_parser(argc, argv).options(desc).positional(pod).run(), vm);
-		boost::program_options::notify(vm);
-	} catch (std::exception& e) {
-		std::cerr << "Error: " << e.what() << "\n";
-		return 1;
+		case 'a':
+			analytic = true;
+			break;
+
+		case 'o':
+			output_path = optarg;
+			break;
+
+		case 'd':
+			depthmap_files.emplace_back(optarg);
+
+			// Collect additional non-option arguments following -d
+			while (optind < argc && argv[optind][0] != '-') {
+				depthmap_files.emplace_back(argv[optind++]);
+			}
+			break;
+
+		default:
+			// Unknown option or missing argument
+			return 1;
+		}
 	}
 
-	// Help
-	if (vm.count("help")) {
-		std::cout << "Usage: " << argv[0] << " [-o OUTPUT] [-d] INPUT [[-d] INPUT]...\n";
-		std::cout << desc << "\n";
-		return 0;
+	// Remaining positional arguments
+	while (optind < argc) {
+		heightmap_files.emplace_back(argv[optind++]);
 	}
 
 	// No input

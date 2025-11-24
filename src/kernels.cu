@@ -1,6 +1,7 @@
-#include "kernels.cuh"
+// STD
 #include <cmath>
 
+#include "kernels.cuh"
 
 /* Utils */
 
@@ -156,16 +157,13 @@ __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_ma
 
 /* Cone maps */
 
-__device__ void check_texel(unsigned char* heightmap, int width, int height, int u, int v, int du, int dv, float iwidth, float iheight, float h, float &ratio2) {
-	// normalize u displacement
+__device__ void limit_ratio2(unsigned char* heightmap, int width, int height, int u, int v, int du, int dv, float iwidth, float iheight, float h, float &ratio2) {
+	// normalize u and v displacements
 	float dun = (du - u) * iwidth;
-
-	// normalize v displacement
 	float dvn = (dv - v) * iheight;
 
-	// distance squared
-	float d2 = dun * dun + dvn * dvn;
-
+	float d2 = dun * dun + dvn * dvn; // distance squared
+	
 	// height difference
 	float dh = heightmap[index(width, height, du, dv)] / 255.0 - h;
 
@@ -193,7 +191,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 	// init variables
 	int du, dv;
 
-	// search in an increasing radius spiral around the texel
+	// search with increasing radius around the texel
 	for (int r = 1;
 			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
 			r * r <= (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) * max(width, height);
@@ -210,7 +208,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 			if (!suppressed[index(width, height, du, dv)] ||
 					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 
 		// Top side
@@ -224,7 +222,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 			if (!suppressed[index(width, height, du, dv)] ||
 					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 
 		// Left side
@@ -238,7 +236,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 			if (!suppressed[index(width, height, du, dv)] ||
 					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 
 		// Bottom side
@@ -252,7 +250,7 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 			if (!suppressed[index(width, height, du, dv)] ||
 					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
 				continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 	}
 
@@ -304,7 +302,7 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 	int du, dv;
 	int start, end;
 
-	// search in an increasing radius spiral around the texel
+	// search with increasing radius around the texel
 	for (int r = 1;
 			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
 			r * r <= (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) * max(width, height);
@@ -325,17 +323,17 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 		for (int dv = start; dv <= start + r / 2; ++dv) {
 			int discrete_dir = 1;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int dv = start + r / 2 + 1; dv < end - r / 2; ++dv) {
 			int discrete_dir = 0;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int dv = end - r / 2; dv < end; ++dv) {
 			int discrete_dir = 7;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 
 		// Top side
@@ -353,17 +351,17 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 		for (int du = start; du <= start + r / 2; ++du) {
 			int discrete_dir = 3;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int du = start + r / 2 + 1; du < end - r / 2; ++du) {
 			int discrete_dir = 2;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int du = end - r / 2; du < end; ++du) {
 			int discrete_dir = 1;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 
 		// Left side
@@ -381,17 +379,17 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 		for (int dv = start; dv <= start + r / 2; ++dv) {
 			int discrete_dir = 3;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int dv = start + r / 2 + 1; dv < end - r / 2; ++dv) {
 			int discrete_dir = 4;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int dv = end - r / 2; dv < end; ++dv) {
 			int discrete_dir = 5;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 
 		// Bottom side
@@ -409,17 +407,17 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 		for (int du = start; du <= start + r / 2; ++du) {
 			int discrete_dir = 5;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int du = start + r / 2 + 1; du < end - r / 2; ++du) {
 			int discrete_dir = 6;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 		for (int du = end - r / 2; du < end; ++du) {
 			int discrete_dir = 7;
 			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			check_texel(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
 		}
 	}
 

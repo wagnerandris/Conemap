@@ -1,16 +1,5 @@
 #pragma once
 
-__device__ __constant__ float vkernel[9] = {
- -1,-2,-1,
-	0, 0, 0,
-	1, 2, 1
-};
-
-__device__ __constant__ float hkernel[9] = {
- -1, 0, 1,
- -2, 0, 2,
- -1, 0, 1
-};
 
 /* Utils */
 __global__ void invert(unsigned char* data, int width, int height);

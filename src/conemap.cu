@@ -6,6 +6,26 @@
 #include "kernels.cuh"
 #include "Texture.cuh"
 
+std::filesystem::path conemap::test_local_mem(std::filesystem::path output_path) {
+	std::string output_name = output_path / "local_mem_test.png";
+	
+	int width = 256;
+	int height = 256;
+
+	dim3 threads(8, 8);
+	dim3 blocks((width + threads.x - 1) / threads.x,
+							(height + threads.y - 1) / threads.y);
+
+	TextureDevicePointer<unsigned char> output{width, height, 1};
+
+	local_mem<<<blocks, threads>>>(*output, width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+	write_device_texture_to_file(output_name.c_str(), output);
+
+	return output_name;
+}
+
 
 std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::string filepath, bool depthmap) {
 
@@ -21,8 +41,7 @@ std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::
 	int height = input_image.height;
 
 	// Threads/blocks
-	// TODO what's optimal?
-	dim3 threads(16, 16);
+	dim3 threads(8, 8);
 	dim3 blocks((width + threads.x - 1) / threads.x,
 							(height + threads.y - 1) / threads.y);
 

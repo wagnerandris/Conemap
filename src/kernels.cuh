@@ -1,6 +1,9 @@
 #pragma once
 
 
+__global__ void local_mem(unsigned char* output, int width, int height);
+
+
 /* Utils */
 __global__ void invert(unsigned char* data, int width, int height);
 

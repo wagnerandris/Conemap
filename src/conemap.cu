@@ -6,27 +6,6 @@
 #include "kernels.cuh"
 #include "Texture.cuh"
 
-std::filesystem::path conemap::test_local_mem(std::filesystem::path output_path) {
-	std::string output_name = output_path / "local_mem_test.png";
-	
-	int width = 256;
-	int height = 256;
-
-	dim3 threads(8, 8);
-	dim3 blocks((width + threads.x - 1) / threads.x,
-							(height + threads.y - 1) / threads.y);
-
-	TextureDevicePointer<unsigned char> output{width, height, 1};
-
-	local_mem<<<blocks, threads>>>(*output, width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
-
-	write_device_texture_to_file(output_name.c_str(), output);
-
-	return output_name;
-}
-
-
 std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::string filepath, bool depthmap) {
 
 	std::string output_name = depthmap ?
@@ -82,10 +61,24 @@ std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::
 	// Launch kernel
 	create_cone_map_analytic<<<blocks, threads>>>(*input_image, *suppressed, *fod_dirs, *fods, *cone_map, width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
-	
+
 /* Write result image to file */
 	output_name += "_relaxed_cone_map_analytic.png";
 	write_device_texture_to_file(output_name.c_str(), cone_map);
+
+	// return output_name;
+
+/* Relaxed cone map generation: local memory */
+	// Allocate device memory
+	TextureDevicePointer<unsigned char> cone_map_lm{width, height, 4};
+
+	// Launch kernel
+	create_cone_map_analytic_local_mem<<<blocks, threads>>>(*input_image, *suppressed, *fod_dirs, *fods, *cone_map_lm, width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+	
+/* Write result image to file */
+	output_name += "_relaxed_cone_map_analytic_lm.png";
+	write_device_texture_to_file(output_name.c_str(), cone_map_lm);
 
 	return output_name;
 }
@@ -105,8 +98,7 @@ std::filesystem::path conemap::discrete(std::filesystem::path output_path, std::
 	int height = input_image.height;
 
 	// Threads/blocks
-	// TODO what's optimal?
-	dim3 threads(16, 16);
+	dim3 threads(8, 8);
 	dim3 blocks((width + threads.x - 1) / threads.x,
 							(height + threads.y - 1) / threads.y);
 
@@ -134,6 +126,20 @@ std::filesystem::path conemap::discrete(std::filesystem::path output_path, std::
 /* Write result image to file */
 	output_name += "_relaxed_cone_map_discrete.png";
 	write_device_texture_to_file(output_name.c_str(), cone_map);
+
+	// return output_name;
+
+/* Relaxed cone map generation: Discrete directions, local memory */
+	// Allocate device memory
+	TextureDevicePointer<unsigned char> cone_map_lm{width, height, 4};
+
+	// Launch kernel
+	create_cone_map_8dir_local_mem<<<blocks, threads>>>(*input_image, *local_max_8dirs, *cone_map_lm, width, height);
+	CUDA_CHECK(cudaDeviceSynchronize());
+
+/* Write result image to file */
+	output_name += "_relaxed_cone_map_discrete_lm.png";
+	write_device_texture_to_file(output_name.c_str(), cone_map_lm);
 
 	return output_name;
 }

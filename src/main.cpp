@@ -69,9 +69,8 @@ int main(int argc, char* argv[]) {
 
 	// No input
 	if (heightmap_files.empty() && depthmap_files.empty()) {
-		conemap::test_local_mem(output_path);
-		// std::cerr << "Error: No input files provided.\n";
-		// return 1;
+		std::cerr << "Error: No input files provided.\n";
+		return 1;
 	}
 
 	// Output

@@ -1,9 +1,6 @@
 #pragma once
 
 
-__global__ void local_mem(unsigned char* output, int width, int height);
-
-
 /* Utils */
 __global__ void invert(unsigned char* data, int width, int height);
 
@@ -25,4 +22,10 @@ __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_ma
 /* Cone maps */
 __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppressed, float* fod_dirs, int* fods, unsigned char* cone_map, int width, int height);
 
+__global__ void create_cone_map_analytic_local_mem(unsigned char* heightmap, bool* suppressed, float* fod_dirs, int* fods, unsigned char* cone_map, int width, int height);
+
+__global__ void create_cone_map_8dir_local_mem(unsigned char* heightmap, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
+
 __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height);
+
+__global__ void create_cone_map_4dir_local_mem(unsigned char* heightmap, unsigned char* local_max_4dirs, unsigned char* cone_map, int width, int height);

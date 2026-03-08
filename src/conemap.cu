@@ -13,7 +13,7 @@ std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::
 		output_path / std::filesystem::path(filepath).stem();
 
 /* Load image */
-	TextureDevicePointer<unsigned char> input_image = read_texture_to_device(filepath.c_str());
+	TextureDevicePointer<uint8_t> input_image = read_texture_to_device(filepath.c_str());
 	if (!input_image) return "";
 
 	int width = input_image.width;
@@ -56,7 +56,7 @@ std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::
 
 /* Relaxed cone map generation: Baseline */
 	// Allocate device memory
-	TextureDevicePointer<unsigned char> cone_map{width, height, 4};
+	TextureDevicePointer<uint8_t> cone_map{width, height, 4};
 
 	// Launch kernel
 	create_cone_map_analytic<<<blocks, threads>>>(*input_image, *suppressed, *fod_dirs, *fods, *cone_map, width, height);
@@ -70,7 +70,7 @@ std::filesystem::path conemap::analytic(std::filesystem::path output_path, std::
 
 /* Relaxed cone map generation: local memory */
 	// Allocate device memory
-	TextureDevicePointer<unsigned char> cone_map_lm{width, height, 4};
+	TextureDevicePointer<uint8_t> cone_map_lm{width, height, 4};
 
 	// Launch kernel
 	create_cone_map_analytic_local_mem<<<blocks, threads>>>(*input_image, *suppressed, *fod_dirs, *fods, *cone_map_lm, width, height);
@@ -91,7 +91,7 @@ std::filesystem::path conemap::discrete(std::filesystem::path output_path, std::
 		output_path / filepath.stem();
 
 /* Load image */
-	TextureDevicePointer<unsigned char> input_image = read_texture_to_device(filepath.c_str());
+	TextureDevicePointer<uint8_t> input_image = read_texture_to_device(filepath.c_str());
 	if (!input_image) return "";
 
 	int width = input_image.width;
@@ -109,37 +109,63 @@ std::filesystem::path conemap::discrete(std::filesystem::path output_path, std::
 
 /* Directional local maxima */
 	// Allocate device memory
-	TextureDevicePointer<unsigned char> local_max_8dirs{width, height, 1};
+	TextureDevicePointer<uint8_t> local_max_8dirs{width, height, 1};
 
 	// Launch kernel
 	local_max_8dir<<<blocks, threads>>>(*input_image, *local_max_8dirs, width, height);
 	CUDA_CHECK(cudaDeviceSynchronize());
 
 /* Relaxed cone map generation: Discrete directions */
-	// Allocate device memory
-	TextureDevicePointer<unsigned char> cone_map{width, height, 4};
+	{
+		// Allocate device memory
+		TextureDevicePointer<uint8_t> cone_map{width, height, 4};
 
-	// Launch kernel
-	create_cone_map_8dir<<<blocks, threads>>>(*input_image, *local_max_8dirs, *cone_map, width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
+		// Launch kernel
+		create_cone_map_8dir<<<blocks, threads>>>(*input_image, *local_max_8dirs, *cone_map, width, height);
+		CUDA_CHECK(cudaDeviceSynchronize());
 
-/* Write result image to file */
-	output_name += "_relaxed_cone_map_discrete.png";
-	write_device_texture_to_file(output_name.c_str(), cone_map);
+	/* Write result image to file */
+		write_device_texture_to_file((output_name + "_relaxed_cone_map_discrete.png").c_str(), cone_map);
 
-	// return output_name;
+		// return output_name;
+	}
 
 /* Relaxed cone map generation: Discrete directions, local memory */
-	// Allocate device memory
-	TextureDevicePointer<unsigned char> cone_map_lm{width, height, 4};
+	{
+		// Allocate device memory
+		TextureDevicePointer<uint8_t> cone_map{width, height, 4};
 
-	// Launch kernel
-	create_cone_map_8dir_local_mem<<<blocks, threads>>>(*input_image, *local_max_8dirs, *cone_map_lm, width, height);
-	CUDA_CHECK(cudaDeviceSynchronize());
+		// Launch kernel
+		create_cone_map_8dir_local_mem<<<blocks, threads>>>(*input_image, *local_max_8dirs, *cone_map, width, height);
+		CUDA_CHECK(cudaDeviceSynchronize());
 
-/* Write result image to file */
-	output_name += "_relaxed_cone_map_discrete_lm.png";
-	write_device_texture_to_file(output_name.c_str(), cone_map_lm);
+	/* Write result image to file */
+		write_device_texture_to_file((output_name + "_relaxed_cone_map_discrete_lm.png").c_str(), cone_map);
+		
+		// return output_name;
+	}
 
-	return output_name;
+/* Relaxed cone map generation: Discrete directions, packed local memory */
+	{
+	/* Pack data for faster local memory reads */
+		// Allocate device memory
+		TextureDevicePointer<uint16_t> packed{width, height, 1};
+
+		// Launch kernel
+		pack<<<blocks, threads>>>(*input_image, *local_max_8dirs, *packed, width, height);
+		CUDA_CHECK(cudaDeviceSynchronize());
+		
+		// Allocate device memory
+		TextureDevicePointer<uint8_t> cone_map{width, height, 4};
+		
+		// Launch kernel
+		create_cone_map_4dir_local_mem<<<blocks, threads>>>(*input_image, *packed, *cone_map, width, height);
+		CUDA_CHECK(cudaDeviceSynchronize());
+
+	/* Write result image to file */
+		write_device_texture_to_file((output_name + "_relaxed_cone_map_discrete_packed_lm.png").c_str(), cone_map);
+
+		return output_name;
+	}
+
 }

@@ -33,27 +33,27 @@ inline void gpuAssert(cudaError_t code, const char *file, int line)
 
 #include "Texture.cuh"
 
-inline TextureDevicePointer<unsigned char> read_texture_to_device(const char* filepath) {
+inline TextureDevicePointer<uint8_t> read_texture_to_device(const char* filepath) {
 	int width;
 	int height;
 	int channels;
-	unsigned char* data;
+	uint8_t* data;
 	// load data
 	data = stbi_load(filepath, &width, &height, &channels, 1);
 	if (!data) {
 		fprintf(stderr, "Could not load texture from %s.\n", filepath);
-		return TextureDevicePointer<unsigned char>{0, 0, 0, nullptr};
+		return TextureDevicePointer<uint8_t>{0, 0, 0, nullptr};
 	}
 
 	printf("Loaded texture from %s.\nWidth: %d, Height: %d\n", filepath, width, height);
-	return TextureDevicePointer<unsigned char>{width, height, 1, data};
+	return TextureDevicePointer<uint8_t>{width, height, 1, data};
 	free(data);
 }
 
-inline bool write_device_texture_to_file(const char* filepath, TextureDevicePointer<unsigned char> &tex) {
+inline bool write_device_texture_to_file(const char* filepath, TextureDevicePointer<uint8_t> &tex) {
 	// copy to host
 	int size = tex.width * tex.height * tex.channels;
-	unsigned char* h_data = new unsigned char[size];
+	uint8_t* h_data = new uint8_t[size];
 	CUDA_CHECK(cudaMemcpy(h_data, *tex, size, cudaMemcpyDeviceToHost));
 
 	// write to file

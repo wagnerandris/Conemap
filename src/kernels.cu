@@ -4,17 +4,90 @@
 // CUDA
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cstdint>
 
 #include "kernels.cuh"
 
-
 /* Utils */
 
-__device__ int index(int width, int height, int u, int v) {
+struct Unpacked {
+    uint8_t x;    // 3 bits
+    uint8_t y;    // 3 bits
+    uint8_t h;    // 6 bits
+    uint8_t dirs; // 4 bit mask
+};
+
+__device__ __forceinline__
+Unpacked unpack(uint16_t packed) {
+    return Unpacked{
+        uint8_t(packed >> 13),
+        uint8_t((packed >> 10) & 0x7),
+        uint8_t((packed >> 4) & 0x3F),
+        uint8_t(packed & 0xF)
+    };
+}
+
+__device__ __forceinline__
+uint16_t pack(const Unpacked& d) {
+    return ((d.x & 0x7)  << 13) |
+           ((d.y & 0x7)  << 10) |
+           ((d.h & 0x3F) << 4)  |
+           (d.dirs & 0xF);
+}
+
+__device__ __forceinline__
+int dir4(int du, int dv)
+{
+    if (abs(du) > abs(dv))
+        return du > 0 ? 0 : 2;   // E / W
+    else
+        return dv > 0 ? 1 : 3;   // N / S
+}
+
+__device__ __forceinline__
+int dir8(int du, int dv)
+{
+    const float t = 0.41421356237f;
+
+    float adu = static_cast<float>(abs(du));
+    float adv = static_cast<float>(abs(dv));
+
+    return (adv <= adu * t) ? (du > 0 ? 0 : 4) :
+           (adu <= adv * t) ? (dv > 0 ? 2 : 6) :
+           (du > 0)         ? (dv > 0 ? 1 : 7) :
+                              (dv > 0 ? 3 : 5);
+}
+
+__device__ __forceinline__
+int index(int width, int height, int u, int v) {
 	return (v % height + height) % height * width + (u % width + width) % width;
 }
 
-__global__ void invert(unsigned char* data, int width, int height) {
+__global__ void pack(uint8_t* heightmap, uint8_t* local_max_8dirs, uint16_t* packed, int width, int height) {
+    int u = blockIdx.x * blockDim.x + threadIdx.x;
+    int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (u >= width || v >= height) return;
+
+    int idx = v * width + u;
+
+    uint8_t dirs =
+        (local_max_8dirs[idx * 4 + 0] << 0) |
+        (local_max_8dirs[idx * 4 + 1] << 2) |
+        (local_max_8dirs[idx * 4 + 2] << 4) |
+        (local_max_8dirs[idx * 4 + 3] << 6);
+
+    Unpacked unpacked{
+        static_cast<uint8_t>(threadIdx.x),
+        static_cast<uint8_t>(threadIdx.y),
+        static_cast<uint8_t>(heightmap[idx] >> 2), // 8 -> 6 bits
+        dirs
+    };
+
+    packed[idx] = pack(unpacked);
+}
+
+__global__ void invert(uint8_t* data, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -23,7 +96,7 @@ __global__ void invert(unsigned char* data, int width, int height) {
 	data[v * width + u] = 255 - data[v * width + u];
 }
 
-__global__ void bits_to_image(unsigned char* data, unsigned char* output_image, int width, int height, unsigned char bitmask) {
+__global__ void bits_to_image(uint8_t* data, uint8_t* output_image, int width, int height, uint8_t bitmask) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -47,7 +120,7 @@ __device__ __constant__ float vkernel[9] = {
 	1, 2, 1
 };
 
-__global__ void fod(unsigned char* heightmap, int* fods, float* fod_dirs, int width, int height) {
+__global__ void fod(uint8_t* heightmap, int* fods, float* fod_dirs, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -104,7 +177,7 @@ __global__ void watershed(int* fods, bool* watersheds, int width, int height) {
 
 /* Local maxima */
 
-__global__ void non_maximum_suppression(unsigned char* heightmap, float* fod_dirs, bool* watershed, bool* suppressed, int width, int height) {
+__global__ void non_maximum_suppression(uint8_t* heightmap, float* fod_dirs, bool* watershed, bool* suppressed, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -118,7 +191,7 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, float* fod_dir
 	}
 
 	// get the nearest discrete direction
-	unsigned char ddir = static_cast<unsigned char>(
+	uint8_t ddir = static_cast<uint8_t>(
 																(fod_dirs[idx] + M_PI // all positive
 																+ M_PI_4f / 2.0f) // align regions
 																/ M_PI_4f // 8 dirs
@@ -134,7 +207,7 @@ __global__ void non_maximum_suppression(unsigned char* heightmap, float* fod_dir
 	else suppressed[idx] = watershed[idx];
 }
 
-__global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, int width, int height) {
+__global__ void local_max_8dir(uint8_t* heightmap, uint8_t* local_max_8dirs, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -146,7 +219,7 @@ __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_ma
 	const int du[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
 	const int dv[8] = { 0, -1, -1, -1, 0, 1, 1, 1 };
 
-	unsigned char result = 0;
+	uint8_t result = 0;
 
 	for (int dir = 0; dir < 8; ++dir) {
 		// local max given direction (if there is a plateau, we need its last point)
@@ -163,7 +236,7 @@ __global__ void local_max_8dir(unsigned char* heightmap, unsigned char* local_ma
 
 /* Cone maps */
 
-__device__ void limit_ratio2(unsigned char* heightmap, int width, int height, int u, int v, int du, int dv, float iwidth, float iheight, float h, float &ratio2) {
+__device__ void limit_ratio2(uint8_t* heightmap, int width, int height, int u, int v, int du, int dv, float iwidth, float iheight, float h, float &ratio2) {
 	// normalize u and v displacements
 	float dun = (du - u) * iwidth;
 	float dvn = (dv - v) * iheight;
@@ -178,8 +251,8 @@ __device__ void limit_ratio2(unsigned char* heightmap, int width, int height, in
 		ratio2 = d2 / (dh * dh);
 }
 
-__global__ void create_cone_map_analytic_local_mem(unsigned char* heightmap, bool* suppressed, float* fod_dirs, int* fods, unsigned char* cone_map, int width, int height) {
-	__shared__ unsigned char l_heightmap[64];
+__global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* suppressed, float* fod_dirs, int* fods, uint8_t* cone_map, int width, int height) {
+	__shared__ uint8_t l_heightmap[64];
 	__shared__ bool l_suppressed[64];
 	__shared__ float l_fod_dirs[64];
 	__shared__ unsigned int block_finished_flags;
@@ -298,12 +371,12 @@ __global__ void create_cone_map_analytic_local_mem(unsigned char* heightmap, boo
 	// -- Dummer
 	ratio = sqrt(ratio);
 	cone_map[idx * 4 + 0] = heightmap[idx];
-	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
+	cone_map[idx * 4 + 1] = static_cast<uint8_t>(ratio * 255);
 	cone_map[idx * 4 + 2] = (fods[idx * 2] + 1020) / 8;
 	cone_map[idx * 4 + 3] = (fods[idx * 2 + 1] + 1020) / 8;
 }
 
-__global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppressed, float* fod_dirs, int* fods, unsigned char* cone_map, int width, int height) {
+__global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, float* fod_dirs, int* fods, uint8_t* cone_map, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -391,14 +464,14 @@ __global__ void create_cone_map_analytic(unsigned char* heightmap, bool* suppres
 	// -- Dummer
 	ratio = sqrt(ratio);
 	cone_map[idx * 4 + 0] = heightmap[idx];
-	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
+	cone_map[idx * 4 + 1] = static_cast<uint8_t>(ratio * 255);
 	cone_map[idx * 4 + 2] = (fods[idx * 2] + 1020) / 8;
 	cone_map[idx * 4 + 3] = (fods[idx * 2 + 1] + 1020) / 8;
 }
 
-__global__ void create_cone_map_8dir_local_mem(unsigned char* heightmap, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height) {
-	__shared__ unsigned char l_heightmap[64];
-	__shared__ unsigned char l_local_max_8dirs[64];
+__global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* local_max_8dirs, uint8_t* cone_map, int width, int height) {
+	__shared__ uint8_t l_heightmap[64];
+	__shared__ uint8_t l_local_max_8dirs[64];
 	__shared__ unsigned int block_finished_flags;
 
 	// global indices
@@ -447,12 +520,7 @@ __global__ void create_cone_map_8dir_local_mem(unsigned char* heightmap, unsigne
 					int du = bx * 8 + j - u;
 					int dv = by * 8 + i - v;
 
-					// TODO ternary operators instead (?)
-					int discrete_dir = static_cast<unsigned char>(
-																(atan2f(dv, du) + M_PI // all positive
-																+ M_PI_4f / 2.0f) // align regions
-																/ M_PI_4f // 8 dirs
-																);
+					int discrete_dir = dir8(du, dv);
 					// TODO the first block separately, then only the side the block is on (?)
 
 					if (!(l_local_max_8dirs[i * 8 + j] & 1 << discrete_dir)) continue;
@@ -531,16 +599,16 @@ __global__ void create_cone_map_8dir_local_mem(unsigned char* heightmap, unsigne
 		}
 	}
 
-	unsigned char dhdu = (hsum + 1020) / 8;
-	unsigned char dhdv = (vsum + 1020) / 8;
+	uint8_t dhdu = (hsum + 1020) / 8;
+	uint8_t dhdv = (vsum + 1020) / 8;
 
 	cone_map[idx * 4 + 0] = heightmap[idx];
-	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
+	cone_map[idx * 4 + 1] = static_cast<uint8_t>(ratio * 255);
 	cone_map[idx * 4 + 2] = dhdu;
 	cone_map[idx * 4 + 3] = dhdv;
 }
 
-__global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* local_max_8dirs, unsigned char* cone_map, int width, int height) {
+__global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dirs, uint8_t* cone_map, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -558,8 +626,8 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 		}
 	}
 
-	unsigned char dhdu = (hsum + 1020) / 8;
-	unsigned char dhdv = (vsum + 1020) / 8;
+	uint8_t dhdu = (hsum + 1020) / 8;
+	uint8_t dhdv = (vsum + 1020) / 8;
 
 /*Cone ratios*/
 	int idx = v * width + u;
@@ -701,14 +769,13 @@ __global__ void create_cone_map_8dir(unsigned char* heightmap, unsigned char* lo
 	// -- Dummer
 	ratio = sqrt(ratio);
 	cone_map[idx * 4 + 0] = heightmap[idx];
-	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
+	cone_map[idx * 4 + 1] = static_cast<uint8_t>(ratio * 255);
 	cone_map[idx * 4 + 2] = dhdu;
 	cone_map[idx * 4 + 3] = dhdv;
 }
 
-__global__ void create_cone_map_4dir_local_mem(unsigned char* heightmap, unsigned char* local_max_4dirs, unsigned char* cone_map, int width, int height) {
-	__shared__ unsigned char l_heightmap[64];
-	__shared__ unsigned char l_local_max_4dirs[64];
+__global__ void create_cone_map_4dir_local_mem(uint8_t* heightmap, uint16_t* packed, uint8_t* cone_map, int width, int height) {
+	__shared__ uint16_t l_packed[64];
 	__shared__ unsigned int block_finished_flags;
 
 	// global indices
@@ -745,8 +812,7 @@ __global__ void create_cone_map_4dir_local_mem(unsigned char* heightmap, unsigne
 
 	do {
 		// All threads copy to shared memory
-		l_heightmap[local_idx] = heightmap[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
-		l_local_max_4dirs[local_idx] = local_max_4dirs[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
+		l_packed[local_idx] = packed[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
 
 		__syncthreads();
 
@@ -754,13 +820,14 @@ __global__ void create_cone_map_4dir_local_mem(unsigned char* heightmap, unsigne
 		if (!finished) {
 			for (int i = 0; i < 8; ++i) {
 				for (int j = 0; j < 8; ++j) {
-					int du = bx * 8 + j - u;
-					int dv = by * 8 + i - v;
+					uint16_t packed = l_packed[i * 8 + j];
+					int du = bx * 8 + (packed >> 13) - u;
+					int dv = by * 8 + ((packed >> 10) & 7) - v;
 
 					// TODO the first block separately, then only the side the block is on
-					int discrete_dir = abs(du) >= abs(dv) ? (du >= 0 ? 0 : 2) : (dv >= 0 ? 1 : 3);
+					int discrete_dir = dir4(du, dv);
 
-					if (!(l_local_max_4dirs[i * 8 + j] != discrete_dir)) continue;
+					if (!(packed & (1 << discrete_dir))) continue;
 
 					// normalize u and v displacements
 					float dun = du * iwidth;
@@ -769,7 +836,7 @@ __global__ void create_cone_map_4dir_local_mem(unsigned char* heightmap, unsigne
 					float d2 = dun * dun + dvn * dvn; // distance squared
 					
 					// height difference
-					float dh = l_heightmap[i * 8 + j] / 255.0f - h;
+					float dh = (((packed >> 4) & 0x3F) << 2) / 252.0f - h;
 
 					// if more steep than previous best, override
 					if (dh > 0.0f && dh * dh * ratio2 > d2)
@@ -836,11 +903,11 @@ __global__ void create_cone_map_4dir_local_mem(unsigned char* heightmap, unsigne
 		}
 	}
 
-	unsigned char dhdu = (hsum + 1020) / 8;
-	unsigned char dhdv = (vsum + 1020) / 8;
+	uint8_t dhdu = (hsum + 1020) / 8;
+	uint8_t dhdv = (vsum + 1020) / 8;
 
 	cone_map[idx * 4 + 0] = heightmap[idx];
-	cone_map[idx * 4 + 1] = static_cast<unsigned char>(ratio * 255);
+	cone_map[idx * 4 + 1] = static_cast<uint8_t>(ratio * 255);
 	cone_map[idx * 4 + 2] = dhdu;
 	cone_map[idx * 4 + 3] = dhdv;
 }

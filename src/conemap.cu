@@ -152,7 +152,7 @@ std::filesystem::path conemap::discrete(std::filesystem::path output_path, std::
 		TextureDevicePointer<uint16_t> packed{width, height, 1};
 
 		// Launch kernel
-		pack<<<blocks, threads>>>(*input_image, *local_max_8dirs, *packed, width, height);
+		pack_continuously<<<blocks, threads>>>(*input_image, *packed, width, height);
 		CUDA_CHECK(cudaDeviceSynchronize());
 		
 		// Allocate device memory

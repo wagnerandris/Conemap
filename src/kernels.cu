@@ -11,121 +11,182 @@
 /* Utils */
 
 struct Unpacked {
-    uint8_t x;    // 3 bits
-    uint8_t y;    // 3 bits
-    uint8_t h;    // 6 bits
-    uint8_t dirs; // 4 bit mask
+	uint8_t x;		// 3 bits
+	uint8_t y;		// 3 bits
+	uint8_t h;		// 6 bits
+	uint8_t dirs; // 4 bit mask
 };
 
-__device__ __forceinline__
-Unpacked unpack(uint16_t packed) {
-    return Unpacked{
-        uint8_t(packed >> 13),
-        uint8_t((packed >> 10) & 0x7),
-        uint8_t((packed >> 4) & 0x3F),
-        uint8_t(packed & 0xF)
-    };
+__device__ __forceinline__ Unpacked unpack(uint16_t packed) {
+	return Unpacked{uint8_t(packed >> 13), uint8_t((packed >> 10) & 0x7),
+									uint8_t((packed >> 4) & 0x3F), uint8_t(packed & 0xF)};
 }
 
-__device__ __forceinline__
-uint16_t pack(const Unpacked& d) {
-    return ((d.x & 0x7)  << 13) |
-           ((d.y & 0x7)  << 10) |
-           ((d.h & 0x3F) << 4)  |
-           (d.dirs & 0xF);
+__device__ __forceinline__ uint16_t pack(const Unpacked &d) {
+	return ((d.x & 0x7) << 13) | ((d.y & 0x7) << 10) | ((d.h & 0x3F) << 4) |
+				 (d.dirs & 0xF);
 }
 
-__device__ __forceinline__
-int dir4(int du, int dv)
-{
-    if (abs(du) > abs(dv))
-        return du > 0 ? 0 : 2;   // E / W
-    else
-        return dv > 0 ? 1 : 3;   // N / S
+__device__ __forceinline__ int dir4(int du, int dv) {
+	if (abs(du) > abs(dv))
+		return du > 0 ? 0 : 2; // E / W
+	else
+		return dv > 0 ? 1 : 3; // N / S
 }
 
-__device__ __forceinline__
-int dir8(int du, int dv)
-{
-    const float t = 0.41421356237f;
+__device__ __forceinline__ int dir8(int du, int dv) {
+	const float t = 0.41421356237f;
 
-    float adu = static_cast<float>(abs(du));
-    float adv = static_cast<float>(abs(dv));
+	float adu = static_cast<float>(abs(du));
+	float adv = static_cast<float>(abs(dv));
 
-    return (adv <= adu * t) ? (du > 0 ? 0 : 4) :
-           (adu <= adv * t) ? (dv > 0 ? 2 : 6) :
-           (du > 0)         ? (dv > 0 ? 1 : 7) :
-                              (dv > 0 ? 3 : 5);
+	return (adv <= adu * t)		? (du > 0 ? 0 : 4)
+				 : (adu <= adv * t) ? (dv > 0 ? 2 : 6)
+				 : (du > 0)					? (dv > 0 ? 1 : 7)
+														: (dv > 0 ? 3 : 5);
 }
 
-__device__ __forceinline__
-int index(int width, int height, int u, int v) {
+__device__ __forceinline__ int index(int width, int height, int u, int v) {
 	return (v % height + height) % height * width + (u % width + width) % width;
 }
 
-__global__ void pack(uint8_t* heightmap, uint8_t* local_max_8dirs, uint16_t* packed, int width, int height) {
-    int u = blockIdx.x * blockDim.x + threadIdx.x;
-    int v = blockIdx.y * blockDim.y + threadIdx.y;
-
-    if (u >= width || v >= height) return;
-
-    int idx = v * width + u;
-
-    uint8_t dirs =
-        (local_max_8dirs[idx * 4 + 0] << 0) |
-        (local_max_8dirs[idx * 4 + 1] << 2) |
-        (local_max_8dirs[idx * 4 + 2] << 4) |
-        (local_max_8dirs[idx * 4 + 3] << 6);
-
-    Unpacked unpacked{
-        static_cast<uint8_t>(threadIdx.x),
-        static_cast<uint8_t>(threadIdx.y),
-        static_cast<uint8_t>(heightmap[idx] >> 2), // 8 -> 6 bits
-        dirs
-    };
-
-    packed[idx] = pack(unpacked);
-}
-
-__global__ void invert(uint8_t* data, int width, int height) {
+__global__ void pack(uint8_t *__restrict__ heightmap,
+										 uint16_t *__restrict__ packed, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
+	if (u >= width || v >= height)
+		return;
+
+	int idx = v * width + u;
+	int h = heightmap[idx];
+
+	// Direction vectors: Right, Up, Left, Down
+	const int du[4] = {1, 0, -1, 0};
+	const int dv[4] = {0, -1, 0, 1};
+
+	uint8_t dirs = 0;
+
+#pragma unroll
+	for (int dir = 0; dir < 4; ++dir) {
+		if (h > heightmap[index(width, height, u + du[dir], v + dv[dir])] &&
+				h >= heightmap[index(width, height, u - du[dir], v - dv[dir])]) {
+			dirs |= (1 << dir);
+		}
+	}
+
+	packed[idx] = ((threadIdx.x & 0x7) << 13) | ((threadIdx.y & 0x7) << 10) |
+								((h & 0xFC) << 2) | (dirs & 0xF);
+}
+
+__global__ void pack_continuously(const uint8_t *__restrict__ heightmap,
+																	uint16_t *__restrict__ packed, int width,
+																	int height) {
+	__shared__ uint8_t warp0_count;
+
+	// global indices
+	int u = blockIdx.x * blockDim.x + threadIdx.x;
+	int v = blockIdx.y * blockDim.y + threadIdx.y;
+	int idx = v * width + u;
+	int block_base =
+			(blockIdx.y * blockDim.y) * width + (blockIdx.x * blockDim.x);
+
+	// local indices
+	int local_idx = threadIdx.y * blockDim.x + threadIdx.x;
+	int lane_idx = local_idx & 31;
+	int warp_idx = local_idx >> 5;
+
+	bool in_bounds = (u < width && v < height);
+
+	bool active = false;
+	uint16_t packed_value = 0;
+
+	if (in_bounds) {
+		uint8_t h = heightmap[idx];
+		uint8_t dirs = 0;
+
+		// Direction vectors: Right, Up, Left, Down
+		const int du[4] = {1, 0, -1, 0};
+		const int dv[4] = {0, -1, 0, 1};
+
+#pragma unroll
+		for (int dir = 0; dir < 4; ++dir) {
+			if (h > heightmap[index(width, height, u + du[dir], v + dv[dir])] &&
+					h >= heightmap[index(width, height, u - du[dir], v - dv[dir])]) {
+				dirs |= (1 << dir);
+			}
+		}
+
+		packed_value = ((threadIdx.x & 0x7) << 13) | ((threadIdx.y & 0x7) << 10) |
+									 ((h & 0xFC) << 2) | (dirs & 0xF);
+
+		active = dirs != 0;
+	}
+
+	// Find place in continuous memory and write there
+	unsigned ballot = __ballot_sync(0xFFFFFFFF, active);
+	int local_rank = __popc(ballot & ((1u << lane_idx) - 1));
+	int warp_count = __popc(ballot);
+
+	if (local_idx == 0)
+		warp0_count = warp_count;
+	__syncthreads();
+
+	int block_rank = local_rank + (warp_idx == 1 ? warp0_count : 0);
+
+	if (active) {
+		int out_idx = block_base + (block_rank / blockDim.x) * width +
+									(block_rank % blockDim.x);
+		packed[out_idx] = packed_value;
+	}
+
+	// Set terminating null value
+	if (local_idx == 32) {
+		int block_count = warp0_count + warp_count;
+		if (block_count < 64) {
+			int out_idx = block_base + (block_count / blockDim.x) * width +
+										(block_count % blockDim.x);
+			packed[out_idx] = 0;
+		}
+	}
+}
+
+__global__ void invert(uint8_t *data, int width, int height) {
+	int u = blockIdx.x * blockDim.x + threadIdx.x;
+	int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (u >= width || v >= height)
+		return;
 
 	data[v * width + u] = 255 - data[v * width + u];
 }
 
-__global__ void bits_to_image(uint8_t* data, uint8_t* output_image, int width, int height, uint8_t bitmask) {
+__global__ void bits_to_image(uint8_t *__restrict__ data,
+															uint8_t *__restrict__ output_image, int width,
+															int height, uint8_t bitmask) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
+	if (u >= width || v >= height)
+		return;
 
 	output_image[v * width + u] = data[v * width + u] & bitmask ? 255 : 0;
 }
 
-
 /* Derivatives */
 
-__device__ __constant__ float hkernel[9] = {
- -1, 0, 1,
- -2, 0, 2,
- -1, 0, 1
-};
+__device__ __constant__ float hkernel[9] = {-1, 0, 1, -2, 0, 2, -1, 0, 1};
 
-__device__ __constant__ float vkernel[9] = {
- -1,-2,-1,
-	0, 0, 0,
-	1, 2, 1
-};
+__device__ __constant__ float vkernel[9] = {-1, -2, -1, 0, 0, 0, 1, 2, 1};
 
-__global__ void fod(uint8_t* heightmap, int* fods, float* fod_dirs, int width, int height) {
+__global__ void fod(uint8_t *__restrict__ heightmap, int *__restrict__ fods,
+										float *__restrict__ fod_dirs, int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
-	
+	if (u >= width || v >= height)
+		return;
+
 	int idx = v * width + u;
 
 	int hsum = 0;
@@ -144,12 +205,14 @@ __global__ void fod(uint8_t* heightmap, int* fods, float* fod_dirs, int width, i
 	fods[idx * 2 + 1] = vsum;
 }
 
-__global__ void watershed(int* fods, bool* watersheds, int width, int height) {
+__global__ void watershed(int *__restrict__ fods, bool *__restrict__ watersheds,
+													int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
-	
+	if (u >= width || v >= height)
+		return;
+
 	// Second order derivative
 	int hhsum = 0;
 	int vhsum = 0;
@@ -166,58 +229,71 @@ __global__ void watershed(int* fods, bool* watersheds, int width, int height) {
 	}
 
 	int idx = v * width + u;
-	
-	watersheds[idx] =
-		hhsum * fods[idx * 2 + 1] * fods[idx * 2 + 1] -
-		(hvsum + vhsum) * fods[idx * 2 + 0] * fods[idx * 2 + 1] +
-		vvsum * fods[idx * 2 + 0] * fods[idx * 2 + 0]
-		< 0;
-}
 
+	watersheds[idx] =
+			hhsum * fods[idx * 2 + 1] * fods[idx * 2 + 1] -
+					(hvsum + vhsum) * fods[idx * 2 + 0] * fods[idx * 2 + 1] +
+					vvsum * fods[idx * 2 + 0] * fods[idx * 2 + 0] <
+			0;
+}
 
 /* Local maxima */
 
-__global__ void non_maximum_suppression(uint8_t* heightmap, float* fod_dirs, bool* watershed, bool* suppressed, int width, int height) {
+__global__ void non_maximum_suppression(uint8_t *__restrict__ heightmap,
+																				float *__restrict__ fod_dirs,
+																				bool *watershed,
+																				bool *__restrict__ suppressed,
+																				int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
-	
+	if (u >= width || v >= height)
+		return;
+
 	int idx = v * width + u;
-	
+
 	if (!watershed[idx]) {
 		suppressed[idx] = 0;
 		return;
 	}
 
 	// get the nearest discrete direction
-	uint8_t ddir = static_cast<uint8_t>(
-																(fod_dirs[idx] + M_PI // all positive
-																+ M_PI_4f / 2.0f) // align regions
-																/ M_PI_4f // 8 dirs
-																) % 4; // opposite ones are the same
+	uint8_t ddir = static_cast<uint8_t>((fod_dirs[idx] + M_PI // all positive
+																			 + M_PI_4f / 2.0f)		// align regions
+																			/ M_PI_4f						 // 8 dirs
+																			) %
+								 4; // opposite ones are the same
 
 	// neighbours orthogonal to ddir
-	const int du[4] = { 0, -1, 1, 1};
-	const int dv[4] = { 1,	1, 0, 1};
+	const int du[4] = {0, -1, 1, 1};
+	const int dv[4] = {1, 1, 0, 1};
 
 	// if one of the neighbours has greater height, suppress the current texel
-	if			(heightmap[index(width, height, u + du[ddir], v + dv[ddir])] > heightmap[idx]) suppressed[idx] = 0;
-	else if (heightmap[index(width, height, u - du[ddir], v - dv[ddir])] > heightmap[idx]) suppressed[idx] = 0;
-	else suppressed[idx] = watershed[idx];
+	if (heightmap[index(width, height, u + du[ddir], v + dv[ddir])] >
+			heightmap[idx])
+		suppressed[idx] = 0;
+	else if (heightmap[index(width, height, u - du[ddir], v - dv[ddir])] >
+					 heightmap[idx])
+		suppressed[idx] = 0;
+	else
+		suppressed[idx] = watershed[idx];
 }
 
-__global__ void local_max_8dir(uint8_t* heightmap, uint8_t* local_max_8dirs, int width, int height) {
+__global__ void local_max_8dir(uint8_t *__restrict__ heightmap,
+															 uint8_t *__restrict__ local_max_8dirs, int width,
+															 int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
+	if (u >= width || v >= height)
+		return;
 
 	int h = heightmap[v * width + u];
 
-	// Direction vectors: Right, Up-Right, Up, Up-Left, Left, Down-Left, Down, Down-Right
-	const int du[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
-	const int dv[8] = { 0, -1, -1, -1, 0, 1, 1, 1 };
+	// Direction vectors: Right, Up-Right, Up, Up-Left, Left, Down-Left, Down,
+	// Down-Right
+	const int du[8] = {1, 1, 0, -1, -1, -1, 0, 1};
+	const int dv[8] = {0, -1, -1, -1, 0, 1, 1, 1};
 
 	uint8_t result = 0;
 
@@ -233,16 +309,46 @@ __global__ void local_max_8dir(uint8_t* heightmap, uint8_t* local_max_8dirs, int
 	local_max_8dirs[v * width + u] = result;
 }
 
+__global__ void local_max_4dir(const uint8_t *__restrict__ heightmap,
+															 uint8_t *__restrict__ local_max_4dirs, int width,
+															 int height) {
+	int u = blockIdx.x * blockDim.x + threadIdx.x;
+	int v = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (u >= width || v >= height)
+		return;
+
+	int idx = v * width + u;
+	int h = heightmap[idx];
+
+	// Direction vectors: Right, Up, Left, Down
+	const int du[4] = {1, 0, -1, 0};
+	const int dv[4] = {0, -1, 0, 1};
+
+	uint8_t result = 0;
+
+#pragma unroll
+	for (int dir = 0; dir < 4; ++dir) {
+		if (h > heightmap[index(width, height, u + du[dir], v + dv[dir])] &&
+				h >= heightmap[index(width, height, u - du[dir], v - dv[dir])]) {
+			result |= (1 << dir);
+		}
+	}
+
+	local_max_4dirs[idx] = result;
+}
 
 /* Cone maps */
 
-__device__ void limit_ratio2(uint8_t* heightmap, int width, int height, int u, int v, int du, int dv, float iwidth, float iheight, float h, float &ratio2) {
+__device__ void limit_ratio2(uint8_t *heightmap, int width, int height, int u,
+														 int v, int du, int dv, float iwidth, float iheight,
+														 float h, float &ratio2) {
 	// normalize u and v displacements
 	float dun = (du - u) * iwidth;
 	float dvn = (dv - v) * iheight;
 
 	float d2 = dun * dun + dvn * dvn; // distance squared
-	
+
 	// height difference
 	float dh = heightmap[index(width, height, du, dv)] / 255.0 - h;
 
@@ -251,7 +357,10 @@ __device__ void limit_ratio2(uint8_t* heightmap, int width, int height, int u, i
 		ratio2 = d2 / (dh * dh);
 }
 
-__global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* suppressed, float* fod_dirs, int* fods, uint8_t* cone_map, int width, int height) {
+__global__ void create_cone_map_analytic_local_mem(
+		uint8_t *__restrict__ heightmap, bool *__restrict__ suppressed,
+		float *__restrict__ fod_dirs, int *__restrict__ fods,
+		uint8_t *__restrict__ cone_map, int width, int height) {
 	__shared__ uint8_t l_heightmap[64];
 	__shared__ bool l_suppressed[64];
 	__shared__ float l_fod_dirs[64];
@@ -261,7 +370,7 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 	int idx = v * width + u;
-	
+
 	// local indices
 	int local_idx = threadIdx.y * blockDim.x + threadIdx.x;
 	int lane_idx = local_idx & 31;
@@ -269,16 +378,16 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 
 	// finished flags
 	bool finished = false;
-	if (u >= width || v >= height) finished = true;
+	if (u >= width || v >= height)
+		finished = true;
 
 	if (local_idx == 0)
 		block_finished_flags = 0;
-	__syncthreads();
-	
+
 	// variables for cone setting
 	float iwidth = 1.0f / width;
 	float iheight = 1.0f / height;
-	float ratio2 = 1.0f; // squared tangent of half aperture angle
+	float ratio2 = 1.0f;							 // squared tangent of half aperture angle
 	float h = heightmap[idx] / 255.0f; // normalized height
 
 	// radius search variables
@@ -291,9 +400,12 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 
 	do {
 		// All threads copy to shared memory
-		l_heightmap[local_idx] = heightmap[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
-		l_suppressed[local_idx] = suppressed[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
-		l_fod_dirs[local_idx] = fod_dirs[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
+		l_heightmap[local_idx] = heightmap[index(
+				width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
+		l_suppressed[local_idx] = suppressed[index(
+				width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
+		l_fod_dirs[local_idx] = fod_dirs[index(width, height, bx * 8 + threadIdx.x,
+																					 by * 8 + threadIdx.y)];
 
 		__syncthreads();
 
@@ -305,7 +417,8 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 					int dv = by * 8 + i - v;
 
 					if (!l_suppressed[i * 8 + j] ||
-						abs(remainderf((l_fod_dirs[i * 8 + j] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0f))
+							abs(remainderf((l_fod_dirs[i * 8 + j] - atan2f(dv, du) - M_PI_2),
+														 M_PI)) > (M_PI / 8.0f))
 						continue;
 
 					// normalize u and v displacements
@@ -313,7 +426,7 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 					float dvn = dv * iheight;
 
 					float d2 = dun * dun + dvn * dvn; // distance squared
-					
+
 					// height difference
 					float dh = l_heightmap[i * 8 + j] / 255.0f - h;
 
@@ -330,19 +443,20 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 			step = 0;
 
 			// check if the next is too far away for any contribution
-			if (r * r * 64 > (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) * max(width, height))
+			if (r * r * 64 > (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) *
+													 max(width, height))
 				finished = true;
 
 			// warp-level check
-			unsigned mask = __ballot_sync(0xffffffff, finished);
-			bool warp_finished = (mask == 0xffffffff);
+			bool warp_finished = __all_sync(0xffffffff, finished);
 
 			// communicate between warps
-			if (lane_idx == 0 && warp_finished) atomicOr(&block_finished_flags, 1u << warp_idx);
+			if (lane_idx == 0 && warp_finished)
+				atomicOr(&block_finished_flags, 1u << warp_idx);
 
 			__syncthreads();
 		}
-		
+
 		// step along layer
 		if (step < 2 * r) {
 			// Right side:
@@ -364,7 +478,7 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 		++step;
 
 	} while (block_finished_flags != 3);
-		
+
 	float ratio = sqrt(ratio2);
 	// most of the data is on the low end...sqrting again spreads it better
 	// (plus multiply is a cheap operation in shaders!)
@@ -376,11 +490,17 @@ __global__ void create_cone_map_analytic_local_mem(uint8_t* heightmap, bool* sup
 	cone_map[idx * 4 + 3] = (fods[idx * 2 + 1] + 1020) / 8;
 }
 
-__global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, float* fod_dirs, int* fods, uint8_t* cone_map, int width, int height) {
+__global__ void create_cone_map_analytic(uint8_t *__restrict__ heightmap,
+																				 bool *__restrict__ suppressed,
+																				 float *__restrict__ fod_dirs,
+																				 int *__restrict__ fods,
+																				 uint8_t *__restrict__ cone_map,
+																				 int width, int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
+	if (u >= width || v >= height)
+		return;
 
 	int idx = v * width + u;
 
@@ -397,9 +517,11 @@ __global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, f
 
 	// search with increasing radius around the texel
 	for (int r = 1;
-			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			r * r <= (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) * max(width, height);
-			++r) {
+			 // otherwise we can't find anything steeper than the current min_ratio
+			 // (see min_ratio assignment)
+			 r * r <= (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) *
+										max(width, height);
+			 ++r) {
 
 		// Right side
 
@@ -410,9 +532,12 @@ __global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, f
 		for (int dv = v - r; dv < v + r - 1; ++dv) {
 			// check if (suppressed) watershed point, skip if not
 			if (!suppressed[index(width, height, du, dv)] ||
-					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] -
+													atan2f(dv, du) - M_PI_2),
+												 M_PI)) > (M_PI / 8.0))
 				continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 
 		// Top side
@@ -424,9 +549,12 @@ __global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, f
 		for (int du = u - r; du < u + r - 1; ++du) {
 			// check if (suppressed) watershed point, skip if not
 			if (!suppressed[index(width, height, du, dv)] ||
-					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] -
+													atan2f(dv, du) - M_PI_2),
+												 M_PI)) > (M_PI / 8.0))
 				continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 
 		// Left side
@@ -438,9 +566,12 @@ __global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, f
 		for (int dv = v - r + 1; dv < v + r; ++dv) {
 			// check if (suppressed) watershed point, skip if not
 			if (!suppressed[index(width, height, du, dv)] ||
-					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] -
+													atan2f(dv, du) - M_PI_2),
+												 M_PI)) > (M_PI / 8.0))
 				continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 
 		// Bottom side
@@ -452,9 +583,12 @@ __global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, f
 		for (int du = u - r + 1; du < u + r; ++du) {
 			// check if (suppressed) watershed point, skip if not
 			if (!suppressed[index(width, height, du, dv)] ||
-					abs(remainderf((fod_dirs[index(width, height, du, dv)] - atan2f(dv, du) - M_PI_2), M_PI)) > (M_PI / 8.0))
+					abs(remainderf((fod_dirs[index(width, height, du, dv)] -
+													atan2f(dv, du) - M_PI_2),
+												 M_PI)) > (M_PI / 8.0))
 				continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 	}
 
@@ -469,7 +603,9 @@ __global__ void create_cone_map_analytic(uint8_t* heightmap, bool* suppressed, f
 	cone_map[idx * 4 + 3] = (fods[idx * 2 + 1] + 1020) / 8;
 }
 
-__global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* local_max_8dirs, uint8_t* cone_map, int width, int height) {
+__global__ void create_cone_map_8dir_local_mem(
+		uint8_t *__restrict__ heightmap, uint8_t *__restrict__ local_max_8dirs,
+		uint8_t *__restrict__ cone_map, int width, int height) {
 	__shared__ uint8_t l_heightmap[64];
 	__shared__ uint8_t l_local_max_8dirs[64];
 	__shared__ unsigned int block_finished_flags;
@@ -478,7 +614,7 @@ __global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* loca
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 	int idx = v * width + u;
-	
+
 	// local indices
 	int local_idx = threadIdx.y * blockDim.x + threadIdx.x;
 	int lane_idx = local_idx & 31;
@@ -486,16 +622,16 @@ __global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* loca
 
 	// finished flags
 	bool finished = false;
-	if (u >= width || v >= height) finished = true;
+	if (u >= width || v >= height)
+		finished = true;
 
 	if (local_idx == 0)
 		block_finished_flags = 0;
-	__syncthreads();
-	
+
 	// variables for cone setting
 	float iwidth = 1.0f / width;
 	float iheight = 1.0f / height;
-	float ratio2 = 1.0f; // squared tangent of half aperture angle
+	float ratio2 = 1.0f;							 // squared tangent of half aperture angle
 	float h = heightmap[idx] / 255.0f; // normalized height
 
 	// radius search variables
@@ -508,8 +644,10 @@ __global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* loca
 
 	do {
 		// All threads copy to shared memory
-		l_heightmap[local_idx] = heightmap[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
-		l_local_max_8dirs[local_idx] = local_max_8dirs[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
+		l_heightmap[local_idx] = heightmap[index(
+				width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
+		l_local_max_8dirs[local_idx] = local_max_8dirs[index(
+				width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
 
 		__syncthreads();
 
@@ -521,16 +659,18 @@ __global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* loca
 					int dv = by * 8 + i - v;
 
 					int discrete_dir = dir8(du, dv);
-					// TODO the first block separately, then only the side the block is on (?)
+					// TODO the first block separately, then only the side the block is on
+					// (?)
 
-					if (!(l_local_max_8dirs[i * 8 + j] & 1 << discrete_dir)) continue;
+					if (!(l_local_max_8dirs[i * 8 + j] & 1 << discrete_dir))
+						continue;
 
 					// normalize u and v displacements
 					float dun = du * iwidth;
 					float dvn = dv * iheight;
 
 					float d2 = dun * dun + dvn * dvn; // distance squared
-					
+
 					// height difference
 					float dh = l_heightmap[i * 8 + j] / 255.0f - h;
 
@@ -547,19 +687,20 @@ __global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* loca
 			step = 0;
 
 			// check if the next is too far away for any contribution
-			if (r * r * 64 > (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) * max(width, height))
+			if (r * r * 64 > (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) *
+													 max(width, height))
 				finished = true;
 
 			// warp-level check
-			unsigned mask = __ballot_sync(0xffffffff, finished);
-			bool warp_finished = (mask == 0xffffffff);
+			bool warp_finished = __all_sync(0xffffffff, finished);
 
 			// communicate between warps
-			if (lane_idx == 0 && warp_finished) atomicOr(&block_finished_flags, 1u << warp_idx);
+			if (lane_idx == 0 && warp_finished)
+				atomicOr(&block_finished_flags, 1u << warp_idx);
 
 			__syncthreads();
 		}
-		
+
 		// step along layer
 		if (step < 2 * r) {
 			// Right side:
@@ -581,13 +722,13 @@ __global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* loca
 		++step;
 
 	} while (block_finished_flags != 3);
-		
+
 	float ratio = sqrt(ratio2);
 	// most of the data is on the low end...sqrting again spreads it better
 	// (plus multiply is a cheap operation in shaders!)
 	// -- Dummer
 	ratio = sqrt(ratio);
-	
+
 	/* First order derivative */
 	int hsum = 0;
 	int vsum = 0;
@@ -608,13 +749,17 @@ __global__ void create_cone_map_8dir_local_mem(uint8_t* heightmap, uint8_t* loca
 	cone_map[idx * 4 + 3] = dhdv;
 }
 
-__global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dirs, uint8_t* cone_map, int width, int height) {
+__global__ void create_cone_map_8dir(uint8_t *__restrict__ heightmap,
+																		 uint8_t *__restrict__ local_max_8dirs,
+																		 uint8_t *__restrict__ cone_map, int width,
+																		 int height) {
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (u >= width || v >= height) return;
+	if (u >= width || v >= height)
+		return;
 
-/* First order derivative */
+	/* First order derivative */
 
 	int hsum = 0;
 	int vsum = 0;
@@ -629,7 +774,7 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 	uint8_t dhdu = (hsum + 1020) / 8;
 	uint8_t dhdv = (vsum + 1020) / 8;
 
-/*Cone ratios*/
+	/*Cone ratios*/
 	int idx = v * width + u;
 
 	float iwidth = 1.0f / width;
@@ -637,7 +782,7 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 
 	// normalize height
 	float h = heightmap[idx] / 255.0f;
-	
+
 	float ratio2 = 1.0f;
 
 	// init variables
@@ -646,9 +791,11 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 
 	// search with increasing radius around the texel
 	for (int r = 1;
-			// otherwise we can't find anything steeper than the current min_ratio (see min_ratio assignment)
-			r * r <= (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) * max(width, height);
-			++r) {
+			 // otherwise we can't find anything steeper than the current min_ratio
+			 // (see min_ratio assignment)
+			 r * r <= (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) *
+										max(width, height);
+			 ++r) {
 
 		// Right side
 
@@ -664,18 +811,24 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 		// skip if not
 		for (int dv = start; dv <= start + r / 2; ++dv) {
 			int discrete_dir = 1;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int dv = start + r / 2 + 1; dv < end - r / 2; ++dv) {
 			int discrete_dir = 0;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int dv = end - r / 2; dv < end; ++dv) {
 			int discrete_dir = 7;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 
 		// Top side
@@ -692,18 +845,24 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 		// skip if not
 		for (int du = start; du <= start + r / 2; ++du) {
 			int discrete_dir = 3;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int du = start + r / 2 + 1; du < end - r / 2; ++du) {
 			int discrete_dir = 2;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int du = end - r / 2; du < end; ++du) {
 			int discrete_dir = 1;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 
 		// Left side
@@ -720,18 +879,24 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 		// skip if not
 		for (int dv = start; dv <= start + r / 2; ++dv) {
 			int discrete_dir = 3;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int dv = start + r / 2 + 1; dv < end - r / 2; ++dv) {
 			int discrete_dir = 4;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int dv = end - r / 2; dv < end; ++dv) {
 			int discrete_dir = 5;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 
 		// Bottom side
@@ -748,18 +913,24 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 		// skip if not
 		for (int du = start; du <= start + r / 2; ++du) {
 			int discrete_dir = 5;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int du = start + r / 2 + 1; du < end - r / 2; ++du) {
 			int discrete_dir = 6;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 		for (int du = end - r / 2; du < end; ++du) {
 			int discrete_dir = 7;
-			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir)) continue;
-			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h, ratio2);
+			if (!(local_max_8dirs[dv * width + du] & 1 << discrete_dir))
+				continue;
+			limit_ratio2(heightmap, width, height, u, v, du, dv, iwidth, iheight, h,
+									 ratio2);
 		}
 	}
 
@@ -774,7 +945,10 @@ __global__ void create_cone_map_8dir(uint8_t* heightmap, uint8_t* local_max_8dir
 	cone_map[idx * 4 + 3] = dhdv;
 }
 
-__global__ void create_cone_map_4dir_local_mem(uint8_t* heightmap, uint16_t* packed, uint8_t* cone_map, int width, int height) {
+__global__ void create_cone_map_4dir_local_mem(uint8_t *__restrict__ heightmap,
+																							 uint16_t *__restrict__ packed,
+																							 uint8_t *__restrict__ cone_map,
+																							 int width, int height) {
 	__shared__ uint16_t l_packed[64];
 	__shared__ unsigned int block_finished_flags;
 
@@ -782,7 +956,7 @@ __global__ void create_cone_map_4dir_local_mem(uint8_t* heightmap, uint16_t* pac
 	int u = blockIdx.x * blockDim.x + threadIdx.x;
 	int v = blockIdx.y * blockDim.y + threadIdx.y;
 	int idx = v * width + u;
-	
+
 	// local indices
 	int local_idx = threadIdx.y * blockDim.x + threadIdx.x;
 	int lane_idx = local_idx & 31;
@@ -790,16 +964,16 @@ __global__ void create_cone_map_4dir_local_mem(uint8_t* heightmap, uint16_t* pac
 
 	// finished flags
 	bool finished = false;
-	if (u >= width || v >= height) finished = true;
+	if (u >= width || v >= height)
+		finished = true;
 
 	if (local_idx == 0)
 		block_finished_flags = 0;
-	__syncthreads();
-	
+
 	// variables for cone setting
 	float iwidth = 1.0f / width;
 	float iheight = 1.0f / height;
-	float ratio2 = 1.0f; // squared tangent of half aperture angle
+	float ratio2 = 1.0f;							 // squared tangent of half aperture angle
 	float h = heightmap[idx] / 255.0f; // normalized height
 
 	// radius search variables
@@ -812,36 +986,40 @@ __global__ void create_cone_map_4dir_local_mem(uint8_t* heightmap, uint16_t* pac
 
 	do {
 		// All threads copy to shared memory
-		l_packed[local_idx] = packed[index(width, height, bx * 8 + threadIdx.x, by * 8 + threadIdx.y)];
+		l_packed[local_idx] = packed[index(width, height, bx * 8 + threadIdx.x,
+																			 by * 8 + threadIdx.y)];
 
 		__syncthreads();
 
 		// Active threads update their cones
 		if (!finished) {
-			for (int i = 0; i < 8; ++i) {
-				for (int j = 0; j < 8; ++j) {
-					uint16_t packed = l_packed[i * 8 + j];
-					int du = bx * 8 + (packed >> 13) - u;
-					int dv = by * 8 + ((packed >> 10) & 7) - v;
+			for (int k = 0; k < 64; ++k) {
+				uint16_t packed = l_packed[k];
 
-					// TODO the first block separately, then only the side the block is on
-					int discrete_dir = dir4(du, dv);
+				if (packed == 0)
+					break; // terminating 0
 
-					if (!(packed & (1 << discrete_dir))) continue;
+				int du = bx * 8 + (packed >> 13) - u;
+				int dv = by * 8 + ((packed >> 10) & 7) - v;
 
-					// normalize u and v displacements
-					float dun = du * iwidth;
-					float dvn = dv * iheight;
+				// TODO the first block separately, then only the side the block is on
+				int discrete_dir = dir4(du, dv);
 
-					float d2 = dun * dun + dvn * dvn; // distance squared
-					
-					// height difference
-					float dh = (((packed >> 4) & 0x3F) << 2) / 252.0f - h;
+				if (!(packed & (1 << discrete_dir)))
+					continue;
 
-					// if more steep than previous best, override
-					if (dh > 0.0f && dh * dh * ratio2 > d2)
-						ratio2 = d2 / (dh * dh);
-				}
+				// normalize u and v displacements
+				float dun = du * iwidth;
+				float dvn = dv * iheight;
+
+				float d2 = dun * dun + dvn * dvn; // distance squared
+
+				// height difference
+				float dh = (((packed >> 4) & 0x3F) << 2) / 252.0f - h;
+
+				// if more steep than previous best, override
+				if (dh > 0.0f && dh * dh * ratio2 > d2)
+					ratio2 = d2 / (dh * dh);
 			}
 		}
 
@@ -851,19 +1029,20 @@ __global__ void create_cone_map_4dir_local_mem(uint8_t* heightmap, uint16_t* pac
 			step = 0;
 
 			// check if the next is too far away for any contribution
-			if (r * r * 64 > (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) * max(width, height))
+			if (r * r * 64 > (1.0f - h) * (1.0f - h) * ratio2 * max(width, height) *
+													 max(width, height))
 				finished = true;
 
 			// warp-level check
-			unsigned mask = __ballot_sync(0xffffffff, finished);
-			bool warp_finished = (mask == 0xffffffff);
+			bool warp_finished = __all_sync(0xffffffff, finished);
 
 			// communicate between warps
-			if (lane_idx == 0 && warp_finished) atomicOr(&block_finished_flags, 1u << warp_idx);
+			if (lane_idx == 0 && warp_finished)
+				atomicOr(&block_finished_flags, 1u << warp_idx);
 
 			__syncthreads();
 		}
-		
+
 		// step along layer
 		if (step < 2 * r) {
 			// Right side:
@@ -885,13 +1064,13 @@ __global__ void create_cone_map_4dir_local_mem(uint8_t* heightmap, uint16_t* pac
 		++step;
 
 	} while (block_finished_flags != 3);
-		
+
 	float ratio = sqrt(ratio2);
 	// most of the data is on the low end...sqrting again spreads it better
 	// (plus multiply is a cheap operation in shaders!)
 	// -- Dummer
 	ratio = sqrt(ratio);
-	
+
 	/* First order derivative */
 	int hsum = 0;
 	int vsum = 0;

@@ -4,8 +4,10 @@
 
 namespace conemap {
 
-std::filesystem::path analytic(std::filesystem::path output_path, std::string filepath, bool depthmap = false);
+void measure(const std::filesystem::path output_path, const std::filesystem::path filepath, const bool depthmap);
 
-std::filesystem::path discrete(std::filesystem::path output_path, std::filesystem::path filepath, bool depthmap = false);
+std::filesystem::path analytic(const std::filesystem::path output_path, const std::filesystem::path filepath, const bool depthmap);
+
+std::filesystem::path discrete(const std::filesystem::path output_path, const std::filesystem::path filepath, const bool depthmap);
 
 }

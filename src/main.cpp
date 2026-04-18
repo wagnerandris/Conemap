@@ -11,10 +11,12 @@ int main(int argc, char* argv[]) {
 	std::vector<std::filesystem::path> heightmap_files;
 	std::vector<std::filesystem::path> depthmap_files;
 	bool analytic = false;
+	bool measure = false;
 
    // Define long options
 	const struct option long_options[] = {
 		{"help",     no_argument,       nullptr, 'h'},
+		{"measure",  no_argument,       nullptr, 'm'},
 		{"analytic", no_argument,       nullptr, 'a'},
 		{"output",   required_argument, nullptr, 'o'},
 		{"depthmap", required_argument, nullptr, 'd'},
@@ -25,18 +27,23 @@ int main(int argc, char* argv[]) {
 	int option_index = 0;
 
 	// Parse options
-	while ((opt = getopt_long(argc, argv, "hao:d:", long_options, &option_index)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hmao:d:", long_options, &option_index)) != -1) {
 		switch (opt) {
 		case 'h':
 			std::cout << "Usage: " << argv[0] << " [-a] [-o OUTPUT] [-d DEPTH MAP...] HEIGHT MAP...\n"
 				"Options:\n"
 				"  -h, --help            \tproduce help message\n"
+				"  -m, --measure         \tmeasure performance for different generation methods\n"
 				"  -a, --analytic        \tanalytic generation mode\n"
 				"  -o, --output PATH     \tpath to output folder (default: '.')\n"
 				"  -d, --depthmap FILE...\tinput depth map files\n"
 				"Positional arguments:\n"
-				"  FILE... \tinput height map files";
+				"  FILE... \tinput height map files\n";
 			exit(0);
+			break;
+
+		case 'm':
+			measure = true;
 			break;
 
 		case 'a':
@@ -87,9 +94,11 @@ int main(int argc, char* argv[]) {
 			std::cerr << "Error: " << file << " is not a file.\n";
 			continue;
 		}
-		if (analytic) conemap::analytic(output_path, file);
-		else conemap::discrete(output_path, file);
-
+		if (measure) conemap::measure(output_path, file, false);
+		else {
+			if (analytic) conemap::analytic(output_path, file, false);
+			else conemap::discrete(output_path, file, false);
+		}
 	}
 
 	// OK
@@ -98,9 +107,12 @@ int main(int argc, char* argv[]) {
 			std::cerr << "Error: " << file << " is not a file.\n";
 			continue;
 		}
-		if (analytic) conemap::analytic(output_path, file, true);
-		else conemap::discrete(output_path, file, true);
+		if (measure) conemap::measure(output_path, file, true);
+		else {
+			if (analytic) conemap::analytic(output_path, file, true);
+			else conemap::discrete(output_path, file, true);
+		}
 	}
-
+	
 	return 0;
 }

@@ -11,7 +11,6 @@ add_project_arguments(
 conemap_lib = library(
   'conemap',
   'src/conemap.cu',
-  'src/kernels.cu',
 )
 
 conemap_dep = declare_dependency(

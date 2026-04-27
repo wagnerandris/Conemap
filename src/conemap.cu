@@ -11,8 +11,8 @@
 class Conemap
 {
 public:
-	Conemap(const std::filesystem::path output_path, const std::filesystem::path filepath, const bool depthmap) :
-		output_name(output_path / filepath.stem()),
+	Conemap(const std::filesystem::path output_folder, const std::filesystem::path filepath, const bool depthmap) :
+		output_name(filepath.stem()),
 		input_image(read_texture_to_device(filepath.c_str())),
 		width(input_image.width), height(input_image.height), threads(8, 8),
 		blocks((width + threads.x - 1) / threads.x,
@@ -26,6 +26,7 @@ public:
 			invert<<<blocks, threads>>>(*input_image, width, height);
 			CUDA_CHECK(cudaDeviceSynchronize());
 		}
+		output_path = output_folder / output_name;
 
 	}
 
@@ -34,7 +35,7 @@ public:
 		TextureDevicePointer<uint8_t> cone_map(generate_analytic_packed_continuous());
 	
 		std::string analytic_output_name = output_name + "_relaxed_cone_map_analytic_sm.png";
-		write_device_texture_to_file(output_name.c_str(), cone_map);
+		write_device_texture_to_file(analytic_output_name.c_str(), cone_map);
 
 		return analytic_output_name;
 	}
@@ -51,29 +52,26 @@ public:
 
 	void run_measurements()
 	{
-		// measure("original_baseline", [this](){return generate_original_baseline();}, 1);
-		// measure("original_shared_memory", [this](){return generate_original_shared_memory();}, 1);
-		measure("baseline", [this](){return generate_baseline();}, 1);
-		// measure("analytic_baseline", [this](){return generate_analytic_baseline();}, 1);
-		measure("analytic_preprocess", [this](){return generate_analytic_preprocess();}, 1);
-		measure("analytic_shared_memory", [this](){return generate_analytic_shared_memory();}, 1);
-		measure("analytic_packed", [this](){return generate_analytic_packed();}, 1);
-		measure("analytic_packed_continuous", [this](){return generate_analytic_packed_continuous();}, 1);
-		// measure("8dir_baseline", [this](){return generate_8dir_baseline();}, 1);
-		measure("8dir_preprocess", [this](){return generate_8dir_preprocess();}, 1);
-		measure("8dir_shared_memory", [this](){return generate_8dir_shared_memory();}, 1);
-		measure("8dir_packed", [this](){return generate_8dir_packed();}, 1);
-		measure("8dir_packed_continuous", [this](){return generate_8dir_packed_continuous();}, 1);
-		// measure("4dir_baseline", [this](){return generate_4dir_baseline();}, 1);
-		measure("4dir_preprocess", [this](){return generate_4dir_preprocess();}, 1);
-		measure("4dir_shared_memory", [this](){return generate_4dir_shared_memory();}, 1);
-		measure("4dir_packed", [this](){return generate_4dir_packed();}, 1);
-		measure("4dir_packed_continuous", [this](){return generate_4dir_packed_continuous();}, 1);
-		measure("compressed", [this](){return generate_compressed();}, 1);
-		measure("compressed_continuous", [this](){return generate_compressed_continuous();}, 1);
+		printf("\n%s\n", output_name.c_str());
+		measure("baseline", [this](){return generate_baseline();}, 3);
+		measure("analytic_preprocess", [this](){return generate_analytic_preprocess();}, 3);
+		measure("analytic_shared_memory", [this](){return generate_analytic_shared_memory();}, 3);
+		measure("analytic_packed", [this](){return generate_analytic_packed();}, 3);
+		measure("analytic_packed_continuous", [this](){return generate_analytic_packed_continuous();}, 3);
+		measure("8dir_preprocess", [this](){return generate_8dir_preprocess();}, 3);
+		measure("8dir_shared_memory", [this](){return generate_8dir_shared_memory();}, 3);
+		measure("8dir_packed", [this](){return generate_8dir_packed();}, 3);
+		measure("8dir_packed_continuous", [this](){return generate_8dir_packed_continuous();}, 3);
+		measure("4dir_preprocess", [this](){return generate_4dir_preprocess();}, 3);
+		measure("4dir_shared_memory", [this](){return generate_4dir_shared_memory();}, 3);
+		measure("4dir_packed", [this](){return generate_4dir_packed();}, 3);
+		measure("4dir_packed_continuous", [this](){return generate_4dir_packed_continuous();}, 3);
+		measure("compressed", [this](){return generate_compressed();}, 3);
+		measure("compressed_continuous", [this](){return generate_compressed_continuous();}, 3);
 	}
 
 private:
+	std::string output_path;
 	std::string output_name;
 	TextureDevicePointer<uint8_t> input_image;
 	const int width;
@@ -81,9 +79,9 @@ private:
 	const dim3 threads;
 	const dim3 blocks;
 
-	void measure(std::string name, std::function<TextureDevicePointer<uint8_t>()> generate_func, const uint measurement_num)
+	void measure(std::string type, std::function<TextureDevicePointer<uint8_t>()> generate_func, const uint measurement_num)
 	{
-		float milliseconds[measurement_num];
+		printf("\n%s\n", type.c_str());
 		for (uint i = 0; i < measurement_num; ++i) {
 			cudaEvent_t start, stop;
 			cudaEventCreate(&start);
@@ -96,11 +94,12 @@ private:
 			cudaEventRecord(stop);
 
 			cudaEventSynchronize(stop);
-			cudaEventElapsedTime(&milliseconds[i], start, stop);
-			printf("Elapsed time: %f milliseconds\n", milliseconds[i]);
+			float milliseconds;
+			cudaEventElapsedTime(&milliseconds, start, stop);
+			printf("%f\n", milliseconds);
 
-			if (i == 0) {
-				write_device_texture_to_file((output_name + "_" + name + ".png").c_str(), cone_map);
+			if (i == measurement_num - 1) {
+				write_device_texture_to_file((output_name + "_" + type + ".png").c_str(), cone_map);
 			}
 		}
 	}

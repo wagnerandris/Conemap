@@ -851,7 +851,6 @@ __global__ void pack_discrete_continuously(const uint8_t* __restrict__ heightmap
 }
 
 /*Cone maps */
-//TODO Baseline
 __global__ void create_cone_map_baseline(const uint8_t* __restrict__ heightmap,
 																				 uint8_t* __restrict__ cone_map,
 																				 const int width, const int height)

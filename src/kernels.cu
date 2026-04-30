@@ -443,7 +443,7 @@ __device__ __forceinline__ void limit_cone(const uint16_t compressed,
 	const float dvn = dv * iheight;
 
 	const float d2 = dun * dun + dvn * dvn; // distance squared
-	const float dh = (((compressed >> 4) & 0x3F) << 2) / 252.0f - h; // height difference
+	const float dh = ((compressed >> 2) & 0xFC) / 255.0f - h; // height difference
 	const float dh2 = dh * dh;
 
 	if (dh > 0.0f && dh2 * ratio2 > d2) // if steeper than current
@@ -544,7 +544,7 @@ __device__ __forceinline__ void limit_cone(const uint16_t compressed,
 	const float dvn = dv * iheight;
 
 	const float d2 = dun * dun + dvn * dvn; // distance squared
-	const float dh = (((compressed >> 4) & 0x3F) << 2) / 252.0f - h; // height difference
+	const float dh = ((compressed >> 2) & 0xFC) / 255.0f - h; // height difference
 	const float dh2 = dh * dh;
 
 	if (dh > 0.0f && dh2 * ratio2 > d2) // if steeper than current

@@ -1350,6 +1350,8 @@ __global__ void create_cone_map_analytic_shared_mem(const uint8_t* __restrict__ 
 		// Get block and increment step along search layer
 		int2 bidx = get_search_block_idx(r, step++);
 
+		__syncthreads();
+
 		// All threads copy to shared memory
 		s_heightmap[local_idx] = heightmap[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
 		s_watershed[local_idx] = watershed[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
@@ -1427,6 +1429,8 @@ __global__ void create_cone_map_8dir_shared_mem(const uint8_t* __restrict__ heig
 	while (block_finished_flags != 3) {
 		// Get block and increment step along search layer
 		int2 bidx = get_search_block_idx(r, step++);
+
+		__syncthreads();
 
 		// All threads copy to shared memory
 		s_heightmap[local_idx] = heightmap[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
@@ -1511,6 +1515,8 @@ __global__ void create_cone_map_4dir_shared_mem(const uint8_t* __restrict__ heig
 		// Get block and increment step along search layer
 		int2 bidx = get_search_block_idx(r, step++);
 
+		__syncthreads();
+
 		// All threads copy to shared memory
 		s_heightmap[local_idx] = heightmap[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
 		s_local_max_4dirs[local_idx] = local_max_4dirs[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
@@ -1593,6 +1599,8 @@ __global__ void create_cone_map_analytic_packed(const uint8_t* __restrict__ heig
 	while (block_finished_flags != 3) {
 		// Get block and increment step along search layer
 		int2 bidx = get_search_block_idx(r, step++);
+		
+		__syncthreads();
 
 		// All threads copy to shared memory
 		s_packed[local_idx] = packed[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
@@ -1668,6 +1676,8 @@ __global__ void create_cone_map_discrete_packed(const uint8_t* __restrict__ heig
 	while (block_finished_flags != 3) {
 		// Get block and increment step along search layer
 		int2 bidx = get_search_block_idx(r, step++);
+
+		__syncthreads();
 
 		// All threads copy to shared memory
 		s_packed[local_idx] = packed[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
@@ -1749,6 +1759,8 @@ __global__ void create_cone_map_analytic_continuous(const uint8_t* __restrict__ 
 	while (block_finished_flags != 3) {
 		// Get block and increment step along search layer
 		int2 bidx = get_search_block_idx(r, step++);
+		
+		__syncthreads();
 
 		// All threads copy to shared memory
 		s_packed[local_idx] = packed[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];
@@ -1824,6 +1836,8 @@ __global__ void create_cone_map_discrete_continuous(const uint8_t* __restrict__ 
 	while (block_finished_flags != 3) {
 		// Get block and increment step along search layer
 		int2 bidx = get_search_block_idx(r, step++);
+
+		__syncthreads();
 
 		// All threads copy to shared memory
 		s_packed[local_idx] = packed[index(width, height, bidx.x * 8 + threadIdx.x, bidx.y * 8 + threadIdx.y)];

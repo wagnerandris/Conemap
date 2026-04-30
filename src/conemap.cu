@@ -235,6 +235,7 @@ private:
 
 			// Launch kernel
 			create_cone_map_analytic_packed<<<blocks, threads>>>(*input_image, *packed, *fods, *cone_map, width, height);
+			CUDA_CHECK(cudaDeviceSynchronize());
 
 			return cone_map;
 	}
@@ -281,6 +282,7 @@ private:
 
 			// Launch kernel
 			create_cone_map_analytic_continuous<<<blocks, threads>>>(*input_image, *packed, *fods, *cone_map, width, height);
+			CUDA_CHECK(cudaDeviceSynchronize());
 
 			return cone_map;
 	}

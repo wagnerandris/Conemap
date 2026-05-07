@@ -1,0 +1,5 @@
+.cache
+subprojects/cxxopts-*
+subprojects/packagecache/
+subprojects/.wraplock
+subprojects/wrapdb.json

@@ -7,12 +7,12 @@
 #ifndef STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #endif
-#include "stb/stb_image.h"
+#include "subprojects/stb/stb_image.h"
 
 #ifndef STB_IMAGE_WRITE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #endif
-#include "stb/stb_image_write.h"
+#include "subprojects/stb/stb_image_write.h"
 
 // CUDA
 #include <cuda_runtime.h>

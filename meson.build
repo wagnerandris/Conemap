@@ -8,14 +8,17 @@ add_project_arguments(
   language: 'cuda'
 )
 
+stb_inc = include_directories('subprojects')
+
 conemap_lib = library(
   'conemap',
   'src/conemap.cu',
+  include_directories : stb_inc
 )
 
 conemap_dep = declare_dependency(
   link_with : conemap_lib,
-  include_directories: include_directories('src'),
+  include_directories : [include_directories('src'), stb_inc],
 )
 
 # Build the standalone executable only when not a subproject
